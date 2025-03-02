@@ -1,0 +1,5 @@
+torch
+sentence-transformers
+faiss-cpu
+datasets
+accelerate
