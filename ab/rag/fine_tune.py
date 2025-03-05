@@ -1,4 +1,8 @@
 import os
+# Disable wandb logging completely
+os.environ["WANDB_MODE"] = "disabled"
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
+
 import json
 import pandas as pd
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
@@ -10,55 +14,50 @@ from ab.nn.api import data  # Import the LEMUR data API
 # Step 1: Prepare Fine-Tuning Data Using the LEMUR API
 # ---------------------------------------------------------------------------
 # Call the API to get a DataFrame with NN performance and code details.
-# You can add filters as needed; here we retrieve all data.
 df = data(only_best_accuracy=False)
 
-# For demonstration, we'll create fine-tuning examples where:
-# - The prompt is constructed from key context fields.
-# - The response is the neural network code (or a key performance metric).
-
 def create_example(row):
-    # Build the prompt from selected columns.
-    # For example, combine task, dataset, metric, epoch, and hyperparameters.
+    # Build a prompt with key context information and expected NN code as the response.
     prompt = (
         f"Task: {row.get('task', 'N/A')}\n"
         f"Dataset: {row.get('dataset', 'N/A')}\n"
         f"Metric: {row.get('metric', 'N/A')}\n"
         f"Epoch: {row.get('epoch', 'N/A')}\n"
         f"Hyperparameters: {row.get('prm', {})}\n"
-        f"Dataset Description: [Add Internet-sourced dataset details if available]\n"
+        f"Dataset Description: [Include Internet-sourced dataset details here]\n"
         "Provide the corresponding NN model code and predicted accuracy."
     )
-    # Use the neural network code as the response.
-    # Alternatively, you could use accuracy or a combination.
     response = row.get('nn_code', 'No NN code available.')
     return {"prompt": prompt, "response": response}
 
-# Apply the conversion to all rows in the DataFrame
-examples = [create_example(row) for idx, row in df.iterrows()]
+# Convert each row of the DataFrame into a fine-tuning example
+examples = [create_example(row) for _, row in df.iterrows()]
 
-# Split data into train and validation sets (e.g., 80/20 split)
+# Split data into train and validation sets (80/20 split)
 split_idx = int(0.8 * len(examples))
 train_examples = examples[:split_idx]
 val_examples = examples[split_idx:]
 
-# Save these examples to JSON files (optional, for inspection)
+# Optionally, save these examples to JSON files for inspection.
 os.makedirs("data", exist_ok=True)
 with open("data/lemur_train.json", "w", encoding="utf-8") as f:
     json.dump(train_examples, f, indent=2)
 with open("data/lemur_val.json", "w", encoding="utf-8") as f:
     json.dump(val_examples, f, indent=2)
 
-# Alternatively, create a Hugging Face Dataset directly:
-train_dataset = Dataset.from_dict({"prompt": [ex["prompt"] for ex in train_examples],
-                                   "response": [ex["response"] for ex in train_examples]})
-val_dataset = Dataset.from_dict({"prompt": [ex["prompt"] for ex in val_examples],
-                                 "response": [ex["response"] for ex in val_examples]})
+# Create Hugging Face datasets from the examples.
+train_dataset = Dataset.from_dict({
+    "prompt": [ex["prompt"] for ex in train_examples],
+    "response": [ex["response"] for ex in train_examples]
+})
+val_dataset = Dataset.from_dict({
+    "prompt": [ex["prompt"] for ex in val_examples],
+    "response": [ex["response"] for ex in val_examples]
+})
 
-# For causal language modeling, combine prompt and response as the input text.
 def preprocess_function(examples):
+    # Combine prompt and response for causal language modeling.
     combined = [f"{p}\nResponse: {r}" for p, r in zip(examples["prompt"], examples["response"])]
-    # Tokenize with truncation/padding; adjust max_length as needed.
     return tokenizer(combined, truncation=True, padding="max_length", max_length=512)
 
 # ---------------------------------------------------------------------------
@@ -72,21 +71,21 @@ base_model = AutoModelForCausalLM.from_pretrained(
     torch_dtype="auto"
 )
 
-# Set up QLoRA configuration using PEFT
+# ---------------------------------------------------------------------------
+# Step 3: Set Up QLoRA Fine-Tuning Configuration (PEFT)
+# ---------------------------------------------------------------------------
 lora_config = LoraConfig(
     r=8,
     lora_alpha=32,
-    target_modules=["q_proj", "v_proj"],  # Adjust based on model architecture
+    target_modules=["q_proj", "v_proj"],
     lora_dropout=0.05,
     bias="none"
 )
-
-# Wrap the base model with QLoRA to get the fine-tuning model
 model = get_peft_model(base_model, lora_config)
 print("Trainable parameters:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
 # ---------------------------------------------------------------------------
-# Step 3: Tokenize the Datasets
+# Step 4: Tokenize the Datasets
 # ---------------------------------------------------------------------------
 tokenized_train = train_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
 tokenized_val = val_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
@@ -95,7 +94,7 @@ from transformers import DataCollatorForLanguageModeling
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
 # ---------------------------------------------------------------------------
-# Step 4: Set Up Training Arguments and Fine-Tune
+# Step 5: Set Up Training Arguments and Trainer
 # ---------------------------------------------------------------------------
 training_args = TrainingArguments(
     output_dir="./fine_tuned_model",
@@ -109,6 +108,7 @@ training_args = TrainingArguments(
     logging_steps=10,
     save_strategy="epoch",
     save_total_limit=2,
+    report_to="none"  # Disable logging to W&B and other services
 )
 
 from transformers import Trainer
@@ -123,7 +123,7 @@ trainer = Trainer(
 print("Starting fine-tuning...")
 trainer.train()
 
-# Save the fine-tuned model and tokenizer
+# Save the fine-tuned model and tokenizer for later integration
 model.save_pretrained("./fine_tuned_model")
 tokenizer.save_pretrained("./fine_tuned_model")
 print("Fine-tuning complete. Model saved to './fine_tuned_model'.")
