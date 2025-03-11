@@ -1,13 +1,17 @@
 import os
 import subprocess
+
 from config.config import GITHUB_REPO_DIR, DATASET_DESC_DIR
 
-def ensure_repo_cloned(repo_url, local_name):
+def ensure_repo_cloned(repo_url, local_name, branch="main"):
     repo_path = os.path.join(GITHUB_REPO_DIR, local_name)
     if not os.path.isdir(repo_path):
-        print(f"Cloning {repo_url} into {repo_path}...")
+        print(f"Cloning {repo_url} (branch: {branch}) into {repo_path}...")
         os.makedirs(GITHUB_REPO_DIR, exist_ok=True)
-        subprocess.run(["git", "clone", "--single-branch", "--branch", "main", repo_url, repo_path], check=True)
+        subprocess.run(
+            ["git", "clone", "--single-branch", "--branch", branch, repo_url, repo_path],
+            check=True
+        )
     else:
         print(f"Repository '{local_name}' already exists at {repo_path}.")
 
@@ -22,9 +26,10 @@ def ensure_dataset_file(file_name, content=None):
         print(f"Dataset file '{file_name}' already exists at {file_path}.")
 
 def run_setup():
-    # Clone relevant GitHub repositories for NN training code
-    ensure_repo_cloned("https://github.com/osmr/pytorchcv.git", "pytorchcv")
-    ensure_repo_cloned("https://github.com/pytorch/vision.git", "pytorch_vision")
+    # For pytorchcv, use branch "master" (since "main" doesn't exist)
+    ensure_repo_cloned("https://github.com/osmr/pytorchcv.git", "pytorchcv", branch="master")
+    # For pytorch/vision, the default branch is likely "main"
+    ensure_repo_cloned("https://github.com/pytorch/vision.git", "pytorch_vision", branch="main")
     
     # Create dataset description file(s)
     ensure_dataset_file(

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import os
 from config.config import CODE_EMBEDDING_MODEL_NAME, EMBEDDING_BATCH_SIZE, FAISS_INDEX_PATH, TOP_K_RETRIEVAL, DATASET_DESC_DIR, GITHUB_REPO_DIR
 from setup_data import run_setup
@@ -13,7 +14,7 @@ tokenizer = AutoTokenizer.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_cod
 model = AutoModelForCausalLM.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_code=True, torch_dtype="auto")
 
 # Create a text-generation pipeline
-llm_generator = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=200)
+llm_generator = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512)
 
 def call_llm(prompt):
     output = llm_generator(prompt)
@@ -43,54 +44,42 @@ def filter_results_by_keywords(results, keywords):
             filtered.append(r)
     return filtered
 
-def main():
-    print("=== Automated Data Setup ===")
+def interactive_session():
+    # Run the data setup and build the retrieval index (if needed)
+    print("Setting up external data sources...")
     run_setup()
-
-    print("=== RAG Pipeline Implementation ===")
     corpus_data = load_full_corpus(DATASET_DESC_DIR, GITHUB_REPO_DIR)
     print(f"Loaded {len(corpus_data)} items into the corpus.")
-
-    if not corpus_data:
-        print("Corpus is empty. Please check your data sources.")
-        return
 
     retrieval_system = CodeRetrieval(
         model_name=CODE_EMBEDDING_MODEL_NAME,
         batch_size=EMBEDDING_BATCH_SIZE,
         index_path=FAISS_INDEX_PATH
     )
-    rebuild_index = True  # Change to False if the index exists
+    # Build (or load) the FAISS index
+    rebuild_index = True  # Set this to False if you want to reuse an existing index
     if rebuild_index:
         retrieval_system.build_index(corpus_data)
     else:
         retrieval_system.load_index(FAISS_INDEX_PATH, corpus_data)
 
-    user_query = "How to define a basic neural network in PyTorch?"
-    results = retrieval_system.search(user_query, top_k=TOP_K_RETRIEVAL)
-    print(f"\nTop {TOP_K_RETRIEVAL} results for query: '{user_query}'")
-    for i, res in enumerate(results, start=1):
-        snippet_preview = res["text"][:80].replace("\n", " ")
-        print(f"{i}) distance={res['distance']:.2f} | source={res['metadata']['source']}")
-        print(f"Snippet: {snippet_preview}...\n")
+    print("Entering interactive mode. Type 'exit' to quit.")
+    while True:
+        user_query = input("\nEnter your query: ")
+        if user_query.lower() in ["exit", "quit"]:
+            break
+        results = retrieval_system.search(user_query, top_k=TOP_K_RETRIEVAL)
+        # Optionally filter results further by keywords
+        keywords = ["nn.module", "def forward", "class", "model"]
+        filtered_results = filter_results_by_keywords(results, keywords)
+        final_results = filtered_results if filtered_results else results
 
-    # Optionally filter the results further by keywords
-    keywords = ["nn.module", "def forward", "class", "model"]
-    filtered_results = filter_results_by_keywords(results, keywords)
-    if filtered_results:
-        final_results = filtered_results
-        print(f"After filtering by keywords {keywords}, {len(filtered_results)} results remain.")
-    else:
-        final_results = results
-        print("No additional filtering applied.")
-
-    final_prompt = build_prompt(user_query, final_results)
-    print("=== Prompt for LLM ===")
-    print(final_prompt)
-
-    answer = call_llm(final_prompt)
-    print("=== LLM Answer ===")
-    print(answer)
+        final_prompt = build_prompt(user_query, final_results)
+        print("\n=== Final Prompt for LLM ===")
+        print(final_prompt)
+        answer = call_llm(final_prompt)
+        print("\n=== LLM Answer ===")
+        print(answer)
 
 if __name__ == "__main__":
-    main()
+    interactive_session()
