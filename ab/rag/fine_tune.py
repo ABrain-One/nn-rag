@@ -4,8 +4,8 @@ Fine-Tuning Pipeline for DeepSeek-R1-Distill-Qwen-1.5B
 
 This script fine-tunes a distilled DeepSeek model using examples derived from the LEMUR dataset.
 Each training example is structured as a prompt that includes task, dataset, metric, hyperparameters,
-and a placeholder for an external dataset description, and a response that combines the NN model code
-with performance metrics (accuracy, epoch).
+and a placeholder for an external dataset description. The response combines the NN model code with 
+performance metrics (accuracy and epoch).
 
 DeepSpeed is used for offloading to CPU and memory efficiency, and QLoRA via PEFT is used to fine-tune
 only a small subset of model parameters.
@@ -14,63 +14,40 @@ If a fine-tuned model already exists in the "./fine_tuned_model" directory, the 
 to avoid re-training.
 """
 
+# ========================== All Imports ==========================
 import os
 import json
 import pandas as pd
 import torch
 
-# Environment variables for DeepSpeed and memory management
+# Set environment variables for DeepSpeed and CUDA memory management
 os.environ["DS_CUDA_VERSION"] = "12.4"
 os.environ["WANDB_MODE"] = "disabled"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# Clear CUDA cache
-print("Clearing CUDA cache...")
-torch.cuda.empty_cache()
-
-# Check for DeepSpeed installation
-try:
-    import deepspeed  # noqa: F401
-except ImportError:
-    print("DeepSpeed is not installed. Please install it via 'pip install deepspeed>=0.9.3' and re-run the script.")
-    raise
-
-# Transformers, PEFT, and Dataset libraries
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
-    pipeline
+    DataCollatorForLanguageModeling
 )
 from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 from ab.nn.api import data  # LEMUR data API
-
-# Import retrieval and setup_data utilities (for later integration, not used in training)
-from utils.data_loader import load_full_corpus
-from utils.retrieval import CodeRetrieval
 from setup_data import run_setup
-from dotenv import load_dotenv
-import os
-from config.config import FINE_TUNED_MODEL_DIR
-
-load_dotenv()
-
+from config.config import FINE_TUNED_MODEL_DIR, HF_TOKEN  # HF_TOKEN from your environment or config
 
 # ========================== Constants ==========================
-MAX_LENGTH = 1024  # Maximum tokens for training examples
-HF_token = os.getenv("HF_TOKEN")
-
+MAX_LENGTH = 2048  # Maximum tokens for training examples
 
 # ========================== Helper Functions ==========================
 def create_example(row):
     """
     Converts a row from the LEMUR dataset into a training example.
     The prompt contains task, dataset, metric, hyperparameters, and a placeholder for an external dataset description.
-    The response combines the NN model code with performance metrics (accuracy and epoch).
+    The response combines the NN model code with performance metrics (predicted accuracy and epoch).
     """
     prompt = (
         f"Task: {row.get('task', 'N/A')}\n"
@@ -89,32 +66,36 @@ def create_example(row):
 def preprocess_function(examples):
     """
     Combines prompt and response into a single text and tokenizes it.
-    The tokenized sequence is truncated/padded to MAX_LENGTH.
+    The tokenized output is truncated/padded to MAX_LENGTH.
     """
     combined = [f"{p}\nResponse: {r}" for p, r in zip(examples["prompt"], examples["response"])]
     tokenized = tokenizer(combined, truncation=True, padding="max_length", max_length=MAX_LENGTH)
-    tokenized["labels"] = tokenized["input_ids"].copy()  # For causal LM training
+    tokenized["labels"] = tokenized["input_ids"].copy()  # For causal language modeling
     return tokenized
 
 # ========================== Main Fine-Tuning Function ==========================
 def main():
-    # Check if fine-tuned model exists; if yes, skip training to save resources.
+    # Check if a fine-tuned model already exists; if so, skip training to save resources.
     if os.path.isdir(FINE_TUNED_MODEL_DIR):
         print(f"Fine-tuned model already exists at {FINE_TUNED_MODEL_DIR}. Skipping training.")
         return
 
-    # Step 0: (Optional) Run setup to ensure external data is available.
+    # Step 0: Run setup to ensure external data sources are available.
+    # The purpose of run_setup() is to clone required GitHub repositories and create dataset description files.
+    # This external data is critical for our subsequent retrieval-augmented generation pipeline.
     print("Running setup to ensure external data sources are available...")
     run_setup()
 
-    # Step 1: Prepare training data from the LEMUR API.
+    # Step 1: Prepare training data using the LEMUR API.
     print("Preparing fine-tuning data from LEMUR API...")
     df = data(only_best_accuracy=False)
+    
     examples = [create_example(row) for _, row in df.iterrows()]
     split_idx = int(0.8 * len(examples))
     train_examples = examples[:split_idx]
     val_examples = examples[split_idx:]
 
+    # Save examples for inspection.
     os.makedirs("data", exist_ok=True)
     with open("data/lemur_train.json", "w", encoding="utf-8") as f:
         json.dump(train_examples, f, indent=2)
@@ -130,19 +111,20 @@ def main():
         "response": [ex["response"] for ex in val_examples]
     })
 
-    # Step 2: Load the model and tokenizer (DeepSeek-R1-Distill-Qwen-1.5B)
+
+    # Step 2: Load the base model and tokenizer (DeepSeek-R1-Distill-Qwen-1.5B)
     print("Loading model and tokenizer...")
     MODEL_ID_local = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-    global tokenizer  # So that preprocess_function can access it
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID_local, trust_remote_code=True, use_auth_token=HF_token)
+    global tokenizer  # so that preprocess_function can access it
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID_local, trust_remote_code=True, use_auth_token=HF_TOKEN)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID_local,
         trust_remote_code=True,
         torch_dtype="auto",
-        use_auth_token=HF_token
+        use_auth_token=HF_TOKEN
     )
 
-    # Step 3: Set up QLoRA configuration and enable gradient checkpointing
+    # Step 3: Set up QLoRA configuration (PEFT) and enable gradient checkpointing.
     print("Setting up QLoRA and enabling gradient checkpointing...")
     lora_config = LoraConfig(
         r=8,
@@ -152,29 +134,23 @@ def main():
         bias="none"
     )
     model = get_peft_model(base_model, lora_config)
-    model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
+    model.gradient_checkpointing_enable()  # Saves memory during backpropagation.
+    model.enable_input_require_grads()       # Ensure inputs require gradients.
     print("Trainable parameters:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-    # Step 4: Tokenize datasets
+    # Step 4: Tokenize the datasets.
     print("Tokenizing datasets...")
     tokenized_train = train_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
     tokenized_val = val_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    # Step 5: Create DeepSpeed configuration for offloading and memory efficiency
+    # Step 5: Create DeepSpeed configuration for offloading and memory efficiency.
     print("Creating DeepSpeed configuration...")
     ds_config = {
         "zero_optimization": {
             "stage": 3,
-            "offload_param": {
-                "device": "cpu",
-                "pin_memory": True
-            },
-            "offload_optimizer": {
-                "device": "cpu",
-                "pin_memory": True
-            },
+            "offload_param": {"device": "cpu", "pin_memory": True},
+            "offload_optimizer": {"device": "cpu", "pin_memory": True},
             "overlap_comm": True,
             "contiguous_gradients": True
         },
@@ -186,12 +162,12 @@ def main():
     with open("ds_config.json", "w") as f:
         json.dump(ds_config, f, indent=2)
 
-    # Step 6: Set up training arguments and trainer
+    # Step 6: Set up training arguments and the Trainer.
     print("Setting up training arguments and trainer...")
     training_args = TrainingArguments(
         output_dir="./fine_tuned_model",
         overwrite_output_dir=True,
-        eval_strategy="epoch",  # New naming convention
+        eval_strategy="epoch",
         learning_rate=2e-4,
         per_device_train_batch_size=1,
         per_device_eval_batch_size=1,
@@ -214,15 +190,16 @@ def main():
         data_collator=data_collator,
     )
 
-    # Step 7: Fine-tune the model
+    # Step 7: Fine-tune the model.
     print("Starting fine-tuning...")
     trainer.train()
 
-    # Save the fine-tuned model and tokenizer
+    # Save the fine-tuned model and tokenizer.
+    os.makedirs(FINE_TUNED_MODEL_DIR, exist_ok=True)
     print("Saving model and tokenizer...")
-    model.save_pretrained("./fine_tuned_model")
-    tokenizer.save_pretrained("./fine_tuned_model")
-    print("Fine-tuning complete. Model saved to './fine_tuned_model'.")
+    model.save_pretrained(FINE_TUNED_MODEL_DIR)
+    tokenizer.save_pretrained(FINE_TUNED_MODEL_DIR)
+    print(f"Fine-tuning complete. Model saved to {FINE_TUNED_MODEL_DIR}.")
 
 if __name__ == "__main__":
     main()
