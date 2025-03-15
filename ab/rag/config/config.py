@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Model and embedding settings
 CODE_EMBEDDING_MODEL_NAME = "microsoft/codebert-base"
@@ -21,5 +24,6 @@ os.makedirs(DATASET_DESC_DIR, exist_ok=True)
 GITHUB_REPO_DIR = os.path.join(PROJECT_ROOT, "ab", "rag", "github_repos")
 os.makedirs(GITHUB_REPO_DIR, exist_ok=True)
 
-FINE_TUNED_MODEL_DIR= os.path.join(PROJECT_ROOT, "fine_tuned_model")
-os.makedirs(FINE_TUNED_MODEL_DIR, exist_ok=True)
+FINE_TUNED_MODEL_DIR = os.path.join(PROJECT_ROOT, "fine_tuned_model") 
+
+HF_TOKEN = os.getenv("HF_TOKEN")

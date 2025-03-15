@@ -1,0 +1,13 @@
+/venv
+ab/ab/rag/index
+ab/rag/__pycache__
+ab/rag/utils/__pycache__
+ab/rag/utils/__pycache__
+ab/rag/__pycache__
+ab/rag/config/__pycache__
+ab/rag/__pycache__
+/fine_tuned_model
+/ab/rag/data
+.env
+ab/rag/__pycache__/setup_data.cpython-310.pyc
+db/ab.nn.db
