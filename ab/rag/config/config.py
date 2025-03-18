@@ -1,29 +1,18 @@
+# config/config.py
+
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+# Base directories (adjust as needed)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
-# Model and embedding settings
-CODE_EMBEDDING_MODEL_NAME = "microsoft/codebert-base"
+DATASET_DESC_DIR = os.path.join(REPO_ROOT, "dataset_descriptions")
+GITHUB_REPO_DIR = os.path.join(REPO_ROOT, "github_repos")
+FAISS_INDEX_PATH = os.path.join(REPO_ROOT, "index", "faiss_index.index")
+FINE_TUNED_MODEL_DIR = os.path.join(REPO_ROOT, "fine_tuned_model")
+
+CODE_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_BATCH_SIZE = 8
 TOP_K_RETRIEVAL = 5
 
-# Directories for saving index and data
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
-
-# Folder to store FAISS index
-INDEX_DIR = os.path.join(PROJECT_ROOT, "ab", "rag", "index")
-os.makedirs(INDEX_DIR, exist_ok=True)
-FAISS_INDEX_PATH = os.path.join(INDEX_DIR, "code_index.faiss")
-
-# Folders for external data
-DATASET_DESC_DIR = os.path.join(PROJECT_ROOT, "ab", "rag", "dataset_descriptions")
-os.makedirs(DATASET_DESC_DIR, exist_ok=True)
-
-GITHUB_REPO_DIR = os.path.join(PROJECT_ROOT, "ab", "rag", "github_repos")
-os.makedirs(GITHUB_REPO_DIR, exist_ok=True)
-
-FINE_TUNED_MODEL_DIR = os.path.join(PROJECT_ROOT, "fine_tuned_model") 
-
-HF_TOKEN = os.getenv("HF_TOKEN")
+HF_TOKEN = "YOUR_HF_ACCESS_TOKEN_HERE"  # If needed for private model access

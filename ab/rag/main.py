@@ -1,15 +1,14 @@
+# main.py
+
+#!/usr/bin/env python
 """
 Interactive Inference Pipeline with Retrieval-Augmented Generation (RAG)
 and Explicit Prompt Instructions
 
-This script loads the fine-tuned DeepSeek model and integrates it with a retrieval system.
-It builds a FAISS index over external data (GitHub code and dataset descriptions) and
-constructs a prompt that explicitly instructs the model to generate a short, concise answer
-that includes:
-  - A brief NN model code snippet.
-  - Predicted performance metrics (accuracy and epoch).
-
-If the generated answer is incomplete or needs refinement, you can iterate by adjusting the prompt.
+Key Updates:
+- Provides two few-shot examples (basic, MobileNet adaptation).
+- Uses multi-turn fallback if 'Predicted Accuracy:' or 'Epoch:' is missing.
+- Allows up to 4096 tokens in generation and 1024 tokens in the prompt.
 """
 
 import os
@@ -27,73 +26,153 @@ from transformers import (
     AutoTokenizer,
     pipeline
 )
+
 from utils.data_loader import load_full_corpus
 from utils.retrieval import CodeRetrieval
 from setup_data import run_setup
-from config.config import DATASET_DESC_DIR, GITHUB_REPO_DIR, CODE_EMBEDDING_MODEL_NAME, EMBEDDING_BATCH_SIZE, FAISS_INDEX_PATH, TOP_K_RETRIEVAL, FINE_TUNED_MODEL_DIR
-# ========================== End Imports ==========================
+from config.config import (
+    DATASET_DESC_DIR, GITHUB_REPO_DIR, CODE_EMBEDDING_MODEL_NAME,
+    EMBEDDING_BATCH_SIZE, FAISS_INDEX_PATH, TOP_K_RETRIEVAL, 
+    FINE_TUNED_MODEL_DIR
+)
 
-# --------------------------
-# Helper Functions
-# --------------------------
+# ---------------------------------------------------------------------
+# Increased generation parameters:
+# ---------------------------------------------------------------------
+MAX_NEW_TOKENS = 4096  
+PROMPT_MAX_TOKENS = 1024  
+
+print("Loading fine-tuned model and tokenizer...")
+tokenizer = AutoTokenizer.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_code=True, torch_dtype="auto")
+
+llm_generator = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    max_new_tokens=MAX_NEW_TOKENS
+)
+
+def truncate_prompt(prompt, max_tokens=PROMPT_MAX_TOKENS):
+    tokenized = tokenizer.encode(prompt, add_special_tokens=False)
+    if len(tokenized) > max_tokens:
+        tokenized = tokenized[:max_tokens]
+        return tokenizer.decode(tokenized, skip_special_tokens=True)
+    return prompt
+
 def call_llm(prompt):
     """
-    Generate a response from the fine-tuned model given a prompt.
-    Adjust max_new_tokens if longer outputs are desired.
+    Generates a response from the fine-tuned model using controlled parameters.
+    If the response is missing performance metrics, do a multi-turn approach.
     """
-    output = llm_generator(prompt)
-    return output[0]["generated_text"]
+    prompt = truncate_prompt(prompt, PROMPT_MAX_TOKENS)
+    output = llm_generator(
+        prompt,
+        do_sample=True,
+        temperature=0.2,
+        top_p=0.95,
+        num_beams=5,
+        early_stopping=True,
+        max_new_tokens=MAX_NEW_TOKENS
+    )
+    generated_text = output[0]["generated_text"]
+
+    # Multi-turn fallback if "Predicted Accuracy:" or "Epoch:" is missing
+    if "Predicted Accuracy:" not in generated_text or "Epoch:" not in generated_text:
+        system_reminder = (
+            "\nSYSTEM: Your answer did not include 'Predicted Accuracy:' or 'Epoch:'. "
+            "Please revise your response to include both fields in the format:\n"
+            "Predicted Accuracy: <some number>\nEpoch: <some number>\n"
+        )
+        second_prompt = truncate_prompt(prompt + system_reminder, PROMPT_MAX_TOKENS)
+        second_output = llm_generator(
+            second_prompt,
+            do_sample=True,
+            temperature=0.2,
+            top_p=0.95,
+            num_beams=5,
+            early_stopping=True,
+            max_new_tokens=MAX_NEW_TOKENS
+        )
+        generated_text = second_output[0]["generated_text"]
+
+    return generated_text
 
 def build_prompt(query, retrieved_results):
     """
-    Constructs a final prompt by combining retrieved context with the user query.
-    The prompt explicitly instructs the model to provide a short answer that includes:
-      - A brief NN model code snippet.
-      - The predicted accuracy.
-      - The predicted epoch.
+    Constructs a final prompt by combining retrieved context with user query.
+    Two few-shot examples are provided for demonstration:
+     1) Basic: "How to define a basic neural network in PyTorch?"
+     2) Adaptation: "How to adapt MobileNet to CIFAR-100?"
     """
+    few_shot = (
+        # Example 1 (basic)
+        "Example #1:\n"
+        "User Query: How to define a basic neural network in PyTorch?\n"
+        "Answer:\n"
+        "```python\n"
+        "import torch\n"
+        "import torch.nn as nn\n\n"
+        "class BasicNN(nn.Module):\n"
+        "    def __init__(self, input_size, hidden_size, output_size):\n"
+        "        super(BasicNN, self).__init__()\n"
+        "        self.fc1 = nn.Linear(input_size, hidden_size)\n"
+        "        self.fc2 = nn.Linear(hidden_size, output_size)\n\n"
+        "    def forward(self, x):\n"
+        "        x = torch.relu(self.fc1(x))\n"
+        "        return self.fc2(x)\n"
+        "```\n"
+        "Predicted Accuracy: 92.1%\n"
+        "Epoch: 125\n\n"
+        # Example 2 (adaptation)
+        "Example #2:\n"
+        "User Query: How to adapt the PyTorchCV MobileNet model to CIFAR-100?\n"
+        "Answer:\n"
+        "```python\n"
+        "import torch\n"
+        "import torch.nn as nn\n"
+        "from pytorchcv.model_provider import get_model as ptcv_get_model\n\n"
+        "# Load MobileNet from pytorchcv, then modify the final layer for 100 classes\n"
+        "class MobileNetCIFAR100(nn.Module):\n"
+        "    def __init__(self, pretrained=False):\n"
+        "        super(MobileNetCIFAR100, self).__init__()\n"
+        "        self.base = ptcv_get_model('mobilenet_w1', pretrained=pretrained)\n"
+        "        # replace final classifier\n"
+        "        self.base.output = nn.Linear(in_features=1024, out_features=100)\n"
+        "    def forward(self, x):\n"
+        "        return self.base(x)\n"
+        "```\n"
+        "Predicted Accuracy: 85.4%\n"
+        "Epoch: 45\n\n"
+    )
+
     context = "\n\n".join(
         [f"[Source: {r['metadata']['source']}]:\n{r['text']}" for r in retrieved_results]
     )
-    prompt = f"""
-You are a knowledgeable assistant. Based on the following retrieved context, provide a **short, concise answer** to the user query.
-Your answer must include:
-- A brief neural network (NN) model code snippet.
-- Predicted Accuracy (e.g., 'Predicted Accuracy: 92.1%').
-- Predicted Epoch (e.g., 'Epoch: 125').
 
-Retrieved Context:
-{context}
-
-User Query: {query}
-
-Answer (include 'Predicted Accuracy:' and 'Epoch:' in your response):
-"""
+    prompt = (
+        f"{few_shot}"
+        "You are a knowledgeable assistant. Based on the retrieved context below, provide a short, concise answer to the user query.\n"
+        "Your answer must include a brief neural network model code snippet, 'Predicted Accuracy:', and 'Epoch:'.\n\n"
+        f"Retrieved Context:\n{context}\n\n"
+        f"User Query: {query}\n\n"
+        "Answer:"
+    )
     return prompt
 
 def filter_results_by_keywords(results, keywords):
-    """
-    Optionally filter retrieval results to only include those containing at least one keyword.
-    """
     filtered = []
     for r in results:
-        text = r["text"].lower()
-        if any(keyword.lower() in text for keyword in keywords):
+        src = r["metadata"]["source"].lower()
+        if "github_repos" in src:
             filtered.append(r)
+        else:
+            text = r["text"].lower()
+            if any(keyword.lower() in text for keyword in keywords):
+                filtered.append(r)
     return filtered
 
-# --------------------------
-# Interactive Session Function
-# --------------------------
 def interactive_session():
-    """
-    Runs the interactive inference session:
-      1. Runs setup to ensure external data (GitHub repos, dataset descriptions) is available.
-      2. Builds the FAISS retrieval index from the corpus.
-      3. Prompts the user for a query.
-      4. Retrieves relevant context and builds a final prompt.
-      5. Generates an answer from the fine-tuned model.
-    """
     print("=== Automated Data Setup ===")
     run_setup()
 
@@ -109,21 +188,18 @@ def interactive_session():
         batch_size=EMBEDDING_BATCH_SIZE,
         index_path=FAISS_INDEX_PATH
     )
-    # Build (or load) the FAISS index
-    rebuild_index = True  # Set to False to reuse an existing index
+    rebuild_index = True
     if rebuild_index:
         retrieval_system.build_index(corpus_data)
     else:
         retrieval_system.load_index(FAISS_INDEX_PATH, corpus_data)
 
-    # Interactive loop: prompt user, retrieve context, and generate answer.
     print("Entering interactive mode. Type 'exit' to quit.")
     while True:
         user_query = input("\nEnter your query: ")
         if user_query.lower() in ["exit", "quit"]:
             break
 
-        # Retrieve context for the query
         results = retrieval_system.search(user_query, top_k=TOP_K_RETRIEVAL)
         print(f"\nTop {TOP_K_RETRIEVAL} retrieval results:")
         for i, res in enumerate(results, start=1):
@@ -131,34 +207,17 @@ def interactive_session():
             print(f"{i}) distance={res['distance']:.2f} | source={res['metadata']['source']}")
             print(f"   Snippet: {snippet_preview}...\n")
 
-        # Optionally filter results by keywords for more relevant context
         keywords = ["nn.module", "def forward", "class", "model"]
         filtered_results = filter_results_by_keywords(results, keywords)
         final_results = filtered_results if filtered_results else results
 
-        # Build the final prompt with explicit instructions
         final_prompt = build_prompt(user_query, final_results)
-        print("\n=== Final Prompt for LLM ===")
+        print("\n=== Final Prompt for LLM (for debugging) ===")
         print(final_prompt)
 
-        # Generate answer from the fine-tuned model
         answer = call_llm(final_prompt)
         print("\n=== LLM Answer ===")
         print(answer)
-        # If the answer doesn't include the predicted metrics, you can iteratively refine the prompt.
 
-# --------------------------
-# Load Fine-Tuned Model and Set Up Inference Pipeline
-# --------------------------
-print("Loading fine-tuned model and tokenizer...")
-tokenizer = AutoTokenizer.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(FINE_TUNED_MODEL_DIR, trust_remote_code=True, torch_dtype="auto")
-
-# Create a text-generation pipeline; adjust max_new_tokens as needed.
-llm_generator = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=2048)
-
-# --------------------------
-# Start the Interactive Session
-# --------------------------
 if __name__ == "__main__":
     interactive_session()

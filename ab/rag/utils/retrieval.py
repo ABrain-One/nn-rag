@@ -1,3 +1,5 @@
+# retrieval.py
+
 import os
 import faiss
 import numpy as np
@@ -22,11 +24,19 @@ class CodeRetrieval:
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(self.embeddings)
         print("FAISS index built. Total items:", self.index.ntotal)
+
         if self.index_path:
+            # Create the directory if needed
+            index_dir = os.path.dirname(self.index_path)
+            os.makedirs(index_dir, exist_ok=True)
+            
             print(f"Saving FAISS index to {self.index_path} ...")
             faiss.write_index(self.index, self.index_path)
 
     def load_index(self, index_path, corpus_data):
+        """
+        Loads an existing FAISS index from disk.
+        """
         if not os.path.exists(index_path):
             raise FileNotFoundError(f"{index_path} not found. Build the index first.")
         print(f"Loading FAISS index from {index_path}")
@@ -35,6 +45,9 @@ class CodeRetrieval:
         self.index_path = index_path
 
     def search(self, query, top_k=5):
+        """
+        Searches the FAISS index with a query and returns the top_k results.
+        """
         if self.index is None:
             raise ValueError("Index not built or loaded. Please call build_index() or load_index() first.")
         query_emb = self.embedder.encode([query], convert_to_numpy=True)

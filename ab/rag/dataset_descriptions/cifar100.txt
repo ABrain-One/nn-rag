@@ -1,0 +1,1 @@
+The CIFAR-100 dataset has 60,000 32x32 color images in 100 classes, with 600 images per class. It is a more challenging version of CIFAR-10.

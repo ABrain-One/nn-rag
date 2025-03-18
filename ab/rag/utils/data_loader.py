@@ -1,7 +1,11 @@
+# data_loader.py
+
 import os
-import re
 
 def detect_libraries(text):
+    """
+    Detects key library mentions in the text (e.g., torch, tensorflow) and returns a list.
+    """
     libs = []
     lower_text = text.lower()
     if "torch" in lower_text or "pytorch" in lower_text:
@@ -11,11 +15,16 @@ def detect_libraries(text):
     return libs
 
 def chunk_code(text, min_chunk_length=50):
-    # Split by double newlines (simple chunking)
+    """
+    Splits code into chunks by double newlines. Each chunk must be at least min_chunk_length characters.
+    """
     chunks = [chunk.strip() for chunk in text.split("\n\n") if len(chunk.strip()) >= min_chunk_length]
     return chunks
 
 def load_dataset_descriptions_from_folder(folder_path):
+    """
+    Loads text files (.txt or .md) from the given folder and returns a list of dataset description items.
+    """
     corpus = []
     for root, dirs, files in os.walk(folder_path):
         for file in files:
@@ -37,6 +46,9 @@ def load_dataset_descriptions_from_folder(folder_path):
     return corpus
 
 def load_code_from_repo(repo_path, file_extension=".py"):
+    """
+    Loads code files from a repository folder, splits them into chunks, and returns a list of code items.
+    """
     corpus = []
     for root, dirs, files in os.walk(repo_path):
         for file in files:
@@ -62,9 +74,11 @@ def load_code_from_repo(repo_path, file_extension=".py"):
     return corpus
 
 def load_full_corpus(dataset_folder, repo_folder):
+    """
+    Loads the full corpus by combining dataset descriptions and code from repositories.
+    """
     corpus = []
     corpus.extend(load_dataset_descriptions_from_folder(dataset_folder))
-    # Each subfolder in repo_folder is assumed to be a cloned repo
     for item in os.listdir(repo_folder):
         repo_path = os.path.join(repo_folder, item)
         if os.path.isdir(repo_path):

@@ -1,26 +1,16 @@
-#!/usr/bin/env python
 """
 Fine-Tuning Pipeline for DeepSeek-R1-Distill-Qwen-1.5B
 
-This script fine-tunes a distilled DeepSeek model using examples derived from the LEMUR dataset.
-Each training example is structured as a prompt that includes task, dataset, metric, hyperparameters,
-and a placeholder for an external dataset description. The response combines the NN model code with 
-performance metrics (accuracy and epoch).
-
-DeepSpeed is used for offloading to CPU and memory efficiency, and QLoRA via PEFT is used to fine-tune
-only a small subset of model parameters.
-
-If a fine-tuned model already exists in the "./fine_tuned_model" directory, the script loads that model
-to avoid re-training.
+Key improvements:
+- Incorporates real GitHub or dataset snippets into training examples.
+- Sometimes includes a "refactor" style prompt for advanced code modifications.
 """
 
-# ========================== All Imports ==========================
 import os
 import json
-import pandas as pd
+import random
 import torch
 
-# Set environment variables for DeepSpeed and CUDA memory management
 os.environ["DS_CUDA_VERSION"] = "12.4"
 os.environ["WANDB_MODE"] = "disabled"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
@@ -37,65 +27,158 @@ from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 from ab.nn.api import data  # LEMUR data API
 from setup_data import run_setup
-from config.config import FINE_TUNED_MODEL_DIR, HF_TOKEN  # HF_TOKEN from your environment or config
+from utils.data_loader import load_full_corpus
+from utils.retrieval import CodeRetrieval
+from config.config import (
+    DATASET_DESC_DIR, GITHUB_REPO_DIR, CODE_EMBEDDING_MODEL_NAME,
+    EMBEDDING_BATCH_SIZE, FAISS_INDEX_PATH, TOP_K_RETRIEVAL, 
+    FINE_TUNED_MODEL_DIR, HF_TOKEN
+)
 
-# ========================== Constants ==========================
-MAX_LENGTH = 2048  # Maximum tokens for training examples
+MAX_LENGTH = 4096  # Maximum tokens for training examples
 
-# ========================== Helper Functions ==========================
-def create_example(row):
+# -------------------------------------------------------
+# 1. Create a retrieval system for training-time snippet injection
+# -------------------------------------------------------
+def retrieve_best_snippet(dataset_name, retrieval_system, fallback_query="pytorch"):
+    """
+    Uses the retrieval system to get the top snippet relevant to the dataset_name.
+    If none found or dataset_name is 'N/A', does a fallback search on 'pytorch'
+    (or any fallback query you want).
+    """
+    if not dataset_name or dataset_name == "N/A":
+        dataset_name = fallback_query  # e.g. searching for "pytorch" or "cnn"
+
+    results = retrieval_system.search(dataset_name, top_k=3)  # get top 3
+    if not results:
+        # If no results, do fallback
+        results = retrieval_system.search(fallback_query, top_k=3)
+        if not results:
+            return "No external snippet found."
+    
+    # Just pick the first of the top results (distance-based)
+    best = results[0]
+    snippet_text = best["text"]
+    return snippet_text
+
+# -------------------------------------------------------
+# 2. Create training examples
+# -------------------------------------------------------
+def create_example(row, retrieval_system):
     """
     Converts a row from the LEMUR dataset into a training example.
-    The prompt contains task, dataset, metric, hyperparameters, and a placeholder for an external dataset description.
-    The response combines the NN model code with performance metrics (predicted accuracy and epoch).
+    We retrieve a snippet from the corpus via CodeRetrieval,
+    then 30% of the time do a "refactor" style prompt.
     """
-    prompt = (
-        f"Task: {row.get('task', 'N/A')}\n"
-        f"Dataset: {row.get('dataset', 'N/A')}\n"
-        f"Metric: {row.get('metric', 'N/A')}\n"
-        f"Hyperparameters: {row.get('prm', {})}\n"
-        "Dataset Description: [Insert external dataset description here]\n"
-        "Based on the above, provide the corresponding NN model code along with predicted accuracy and epoch."
-    )
+    task = row.get('task', 'N/A')
+    dataset_name = row.get('dataset', 'N/A')
+    metric = row.get('metric', 'N/A')
+    hyperparams = row.get('prm', {})
     nn_code = row.get('nn_code', 'No NN code available.')
     accuracy = row.get('accuracy', 'N/A')
     epoch = row.get('epoch', 'N/A')
-    response = f"NN Code:\n{nn_code}\nPredicted Accuracy: {accuracy}\nEpoch: {epoch}"
+
+    # 2.1: Retrieve snippet from the index
+    external_snippet = retrieve_best_snippet(dataset_name, retrieval_system)
+
+    # 2.2: Decide if we do "refactor" or direct
+    do_refactor = (random.random() < 0.3)  # 30% chance
+
+    if do_refactor:
+        prompt = (
+            f"Task: {task}\n"
+            f"Dataset: {dataset_name}\n"
+            f"Metric: {metric}\n"
+            f"Hyperparameters: {hyperparams}\n"
+            f"External Snippet:\n{external_snippet}\n\n"
+            "We have an existing model below. Please refactor or adapt the model code to match the above snippet or dataset, "
+            "then provide predicted accuracy and epoch.\n"
+            f"Existing Model Code:\n{nn_code}\n"
+            "Refactor it now."
+        )
+        response = (
+            "Refactored NN Code:\n"
+            f"{nn_code}\n"
+            f"Predicted Accuracy: {accuracy}\n"
+            f"Epoch: {epoch}"
+        )
+    else:
+        prompt = (
+            f"Task: {task}\n"
+            f"Dataset: {dataset_name}\n"
+            f"Metric: {metric}\n"
+            f"Hyperparameters: {hyperparams}\n"
+            f"External Snippet:\n{external_snippet}\n\n"
+            "Based on all the information above, provide a corresponding NN model code along with predicted accuracy and epoch."
+        )
+        response = (
+            f"NN Code:\n{nn_code}\n"
+            f"Predicted Accuracy: {accuracy}\n"
+            f"Epoch: {epoch}"
+        )
+
     return {"prompt": prompt, "response": response}
 
-def preprocess_function(examples):
+def preprocess_function(examples, tokenizer):
     """
     Combines prompt and response into a single text and tokenizes it.
-    The tokenized output is truncated/padded to MAX_LENGTH.
     """
     combined = [f"{p}\nResponse: {r}" for p, r in zip(examples["prompt"], examples["response"])]
-    tokenized = tokenizer(combined, truncation=True, padding="max_length", max_length=MAX_LENGTH)
-    tokenized["labels"] = tokenized["input_ids"].copy()  # For causal language modeling
+    tokenized = tokenizer(
+        combined, 
+        truncation=True, 
+        padding="max_length", 
+        max_length=MAX_LENGTH
+    )
+    tokenized["labels"] = tokenized["input_ids"].copy()
     return tokenized
 
-# ========================== Main Fine-Tuning Function ==========================
+# -------------------------------------------------------
+# 3. Main Fine-Tuning Function
+# -------------------------------------------------------
 def main():
     # Check if a fine-tuned model already exists; if so, skip training to save resources.
     if os.path.isdir(FINE_TUNED_MODEL_DIR):
         print(f"Fine-tuned model already exists at {FINE_TUNED_MODEL_DIR}. Skipping training.")
         return
 
-    # Step 0: Run setup to ensure external data sources are available.
-    # The purpose of run_setup() is to clone required GitHub repositories and create dataset description files.
-    # This external data is critical for our subsequent retrieval-augmented generation pipeline.
+    # 3.1: Ensure data is set up
     print("Running setup to ensure external data sources are available...")
     run_setup()
 
-    # Step 1: Prepare training data using the LEMUR API.
-    print("Preparing fine-tuning data from LEMUR API...")
-    df = data(only_best_accuracy=False)
+    # 3.2: Load the corpus for retrieval
+    print("Loading corpus data for retrieval (GitHub + dataset desc) ...")
+    corpus_data = load_full_corpus(DATASET_DESC_DIR, GITHUB_REPO_DIR)
+    if not corpus_data:
+        raise ValueError("Corpus is empty; cannot proceed with snippet retrieval for training.")
     
-    examples = [create_example(row) for _, row in df.iterrows()]
-    split_idx = int(0.8 * len(examples))
-    train_examples = examples[:split_idx]
-    val_examples = examples[split_idx:]
+    # 3.3: Build or load the FAISS index from the corpus
+    print("Building FAISS index for training-time retrieval ...")
+    retrieval_system = CodeRetrieval(
+        model_name=CODE_EMBEDDING_MODEL_NAME,
+        batch_size=EMBEDDING_BATCH_SIZE,
+        index_path=FAISS_INDEX_PATH
+    )
+    # If you already have an index, you can do retrieval_system.load_index(...), 
+    # but let's always build it here for fresh training
+    retrieval_system.build_index(corpus_data)
 
-    # Save examples for inspection.
+    # 3.4: Prepare fine-tuning data from LEMUR
+    print("Fetching LEMUR data for fine-tuning (only_best_accuracy=False)...")
+    df = data(only_best_accuracy=False).reset_index(drop=True)
+
+    # 3.5: Convert each row to a training example with snippet retrieval
+    all_examples = []
+    for _, row in df.iterrows():
+        ex = create_example(row, retrieval_system)
+        all_examples.append(ex)
+
+    random.shuffle(all_examples)
+    split_idx = int(0.8 * len(all_examples))
+    train_examples = all_examples[:split_idx]
+    val_examples = all_examples[split_idx:]
+
+    # 3.6: Save for inspection
     os.makedirs("data", exist_ok=True)
     with open("data/lemur_train.json", "w", encoding="utf-8") as f:
         json.dump(train_examples, f, indent=2)
@@ -111,11 +194,9 @@ def main():
         "response": [ex["response"] for ex in val_examples]
     })
 
-
-    # Step 2: Load the base model and tokenizer (DeepSeek-R1-Distill-Qwen-1.5B)
-    print("Loading model and tokenizer...")
+    # 3.7: Load the base model + tokenizer
     MODEL_ID_local = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-    global tokenizer  # so that preprocess_function can access it
+    print(f"Loading base model/tokenizer from {MODEL_ID_local}...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID_local, trust_remote_code=True, use_auth_token=HF_TOKEN)
     base_model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID_local,
@@ -124,8 +205,7 @@ def main():
         use_auth_token=HF_TOKEN
     )
 
-    # Step 3: Set up QLoRA configuration (PEFT) and enable gradient checkpointing.
-    print("Setting up QLoRA and enabling gradient checkpointing...")
+    # 3.8: Setup QLoRA (PEFT)
     lora_config = LoraConfig(
         r=8,
         lora_alpha=32,
@@ -134,18 +214,26 @@ def main():
         bias="none"
     )
     model = get_peft_model(base_model, lora_config)
-    model.gradient_checkpointing_enable()  # Saves memory during backpropagation.
-    model.enable_input_require_grads()       # Ensure inputs require gradients.
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
     print("Trainable parameters:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-    # Step 4: Tokenize the datasets.
-    print("Tokenizing datasets...")
-    tokenized_train = train_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
-    tokenized_val = val_dataset.map(preprocess_function, batched=True, remove_columns=["prompt", "response"])
+    # 3.9: Tokenize data
+    print("Tokenizing data...")
+    tokenized_train = train_dataset.map(
+        lambda e: preprocess_function(e, tokenizer), 
+        batched=True, 
+        remove_columns=["prompt", "response"]
+    )
+    tokenized_val = val_dataset.map(
+        lambda e: preprocess_function(e, tokenizer), 
+        batched=True, 
+        remove_columns=["prompt", "response"]
+    )
+
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    # Step 5: Create DeepSpeed configuration for offloading and memory efficiency.
-    print("Creating DeepSpeed configuration...")
+    # 3.10: DeepSpeed config
     ds_config = {
         "zero_optimization": {
             "stage": 3,
@@ -162,10 +250,9 @@ def main():
     with open("ds_config.json", "w") as f:
         json.dump(ds_config, f, indent=2)
 
-    # Step 6: Set up training arguments and the Trainer.
-    print("Setting up training arguments and trainer...")
+    # 3.11: Training args
     training_args = TrainingArguments(
-        output_dir="./fine_tuned_model",
+        output_dir=FINE_TUNED_MODEL_DIR,
         overwrite_output_dir=True,
         eval_strategy="epoch",
         learning_rate=2e-4,
@@ -182,6 +269,7 @@ def main():
         optim="adamw_bnb_8bit",
         deepspeed="./ds_config.json"
     )
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -190,11 +278,10 @@ def main():
         data_collator=data_collator,
     )
 
-    # Step 7: Fine-tune the model.
     print("Starting fine-tuning...")
     trainer.train()
 
-    # Save the fine-tuned model and tokenizer.
+    # 3.12: Save final model
     os.makedirs(FINE_TUNED_MODEL_DIR, exist_ok=True)
     print("Saving model and tokenizer...")
     model.save_pretrained(FINE_TUNED_MODEL_DIR)

@@ -1,1 +1,0 @@
-The CIFAR-10 dataset consists of 60,000 32x32 color images in 10 classes, with 6,000 images per class. It is widely used for image classification tasks.
