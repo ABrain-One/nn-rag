@@ -11,3 +11,5 @@ ab/rag/__pycache__
 .env
 ab/rag/__pycache__/setup_data.cpython-310.pyc
 db/ab.nn.db
+ab/rag/__pycache__/setup_data.cpython-310.pyc
+ab/rag/fine_tuned_model/
