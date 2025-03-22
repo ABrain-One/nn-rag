@@ -45,7 +45,7 @@ def retrieve_and_generate(
         "generated_response": generated_response
     }
 
-def retrieve_and_generate_df(
+def data(
     keyword: str,
     language: str = None,
     owner: str = None,
