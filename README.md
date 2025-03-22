@@ -19,3 +19,10 @@ then optionally fine-tune the LLM for specific tasks.
    python -m venv venv
    source venv/bin/activate   # Linux/Mac
    venv\Scripts\activate      # Windows
+
+2. ### Latest Development Version
+
+Install the latest version directly from GitHub:
+
+```bash
+pip install git+https://github.com/ABrain-One/nn-rag --upgrade
