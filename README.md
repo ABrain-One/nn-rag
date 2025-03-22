@@ -1,4 +1,6 @@
 # <img src='https://abrain.one/img/lemur-nn-icon-64x64.png' width='32px'/> LLM Retrieval Augmented Generation
+<sub><a href='https://pypi.python.org/pypi/nn-rag'><img src='https://img.shields.io/pypi/v/nn-rag.svg'/></a><br/>
+short alias  <a href='https://pypi.python.org/pypi/lrag'>lmur</a></sub>
 
 # nn-rag
 
