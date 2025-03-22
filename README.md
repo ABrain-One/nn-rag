@@ -12,10 +12,23 @@ then optionally fine-tune the LLM for specific tasks.
 - **Pip** or **Conda** for installing dependencies  
 - (Optional) **GPU** with CUDA if you plan to use `faiss-gpu` or do large-scale training
 
-### Installing Dependencies
 
-1. Create and activate a virtual environment (recommended):
+## Create and Activate a Virtual Environment (recommended)
+For Linux/Mac:
    ```bash
-   python -m venv venv
-   source venv/bin/activate   # Linux/Mac
-   venv\Scripts\activate      # Windows
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+For Windows:
+   ```bash
+   python3 -m venv .venv
+   .venv\Scripts\activate
+   ```
+
+All subsequent commands are provided for Linux/Mac OS. For Windows, please replace ```source .venv/bin/activate``` with ```.venv\Scripts\activate```.
+
+Installing from GitHub to get the most recent code of NN RAG:
+```bash
+source .venv/bin/activate
+pip install git+https://github.com/ABrain-One/nn-rag --upgrade --force
+```
