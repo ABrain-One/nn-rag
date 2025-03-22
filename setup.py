@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from pathlib import Path
 
 # Read the dependencies from requirements.txt
 with open("requirements.txt") as f:
