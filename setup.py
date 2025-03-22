@@ -3,10 +3,15 @@ from setuptools import setup, find_packages
 # Read the dependencies from requirements.txt
 with open("requirements.txt") as f:
     required = f.read().splitlines()
-
+    
+def version():
+    with open(Path(__file__).parent / 'version', 'r') as file:
+        v = file.readline()
+    return v
+    
 setup(
     name="nn-rag",
-    version="0.1.0",
+    version=version(),
     description="Neural Retrieval-Augmented Generation for GitHub Search",
     author="ABrain One and contributors",
     author_email="AI@ABrain.one",
