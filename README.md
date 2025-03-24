@@ -2,7 +2,7 @@
 <sub><a href='https://pypi.python.org/pypi/nn-rag'><img src='https://img.shields.io/pypi/v/nn-rag.svg'/></a><br/>
 short alias  <a href='https://pypi.python.org/pypi/lrag'>lrag</a></sub>
 
-# nn-rag
+The original version of the NN RAG project was created by <strong>Waleed Khalid</strong> at the Computer Vision Laboratory, University of Würzburg, Germany.
 
 A minimal Retrieval-Augmented Generation (RAG) pipeline for code and dataset details.  
 This project aims to provide LLMs with additional context from the internet or local repos, 
