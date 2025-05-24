@@ -1,7 +1,10 @@
-PyGithub>=1.55
-sentence-transformers>=2.2.2
-scikit-learn>=1.0.2
+torch>=2.1.0
 transformers>=4.26.1
-python-dotenv>=1.0.0
+PyGithub>=2.6.1
+numpy<2      
+sentence-transformers==4.1.0
 pandas>=1.5.3
-dotenv
+scikit-learn>=1.0.2
+faiss-gpu-cu12==1.8.0.2 
+tqdm>=4.66.0
+python-dotenv>=1.0.0
