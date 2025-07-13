@@ -1,28 +1,31 @@
-import hashlib, json
-from typing import List, Optional
+import json
+import time
 from pathlib import Path
-from ..config.config import CACHE_DIR, TTL_SECONDS
 
-def cpath(query: str) -> Path:
-    h = hashlib.sha1(query.encode()).hexdigest()
-    return CACHE_DIR / f"{h}.json"
+_ROOT = Path.home() / ".cache" / "nn-rag"
+_ROOT.mkdir(exist_ok=True)
+_JSON = _ROOT / "json"
+_JSON.mkdir(exist_ok=True)
+TTL = 86_400  # seconds (24h)
 
-def read_cache(query: str) -> Optional[List[str]]:
-    fp = cpath(query)
-    if not fp.exists():
-        return None
-    if fp.stat().st_mtime < __import__("time").time() - TTL_SECONDS:
-        fp.unlink(missing_ok=True)
-        return None
-    try:
-        return json.loads(fp.read_text())
-    except json.JSONDecodeError:
-        fp.unlink(missing_ok=True)
-        return None
 
-def save_cache(query: str, chunks: List[str]) -> None:
-    try:
-        cpath(query).write_text(json.dumps(chunks))
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("cache write failed for %s: %s", query, e)
+def _cache_path(key: str) -> Path:
+    return _JSON / f"{hash(key)}.json"
+
+
+def load(key: str):
+    p = _cache_path(key)
+    if not p.exists():
+        return None
+    if time.time() - p.stat().st_mtime > TTL:
+        return None
+    return json.loads(p.read_text())
+
+
+def save(key: str, obj) -> None:
+    p = _cache_path(key)
+    p.write_text(json.dumps(obj))
+
+
+def in_cache(key: str) -> bool:
+    return load(key) is not None

@@ -1,30 +1,321 @@
 import re
-from typing import List
+import textwrap
+import logging
+from typing import Dict
+from typing import List, Tuple
 
-_UUID_OR_HASH = re.compile(
-    r"[-_]?(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-"
-    r"[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
-    re.I
+log = logging.getLogger(__name__)
+
+# limit for full-file fallback
+_MAX_LINES = 800
+
+_CLASS_RE = re.compile(
+    r"\bclass\s+(?P<name>[A-Za-z_]\w*)\s*\([^)]*\):[\s\S]*?(?=\bclass\s|\Z)",
+    re.M,
 )
-_VERSION_TAG = re.compile(r"[-_]?v?\d+$|[-_](alpha|beta|rc)$", re.I)
 
-def make_queries(arch: str) -> List[str]:
-    clean = _UUID_OR_HASH.sub("", arch)
-    clean = _VERSION_TAG.sub("", clean)
-    slug = re.sub(r"[^A-Za-z0-9]", "", clean).lower()
-    spaced = re.sub(r"[-_]+", " ", clean).strip().lower()
-    if not slug:
-        return [f"{arch} language:Python"]
-    return [
-        f"{slug} language:Python filename:{slug}.py",
-        f"{spaced} language:Python",
-        f"pytorch {spaced} language:Python",
-        f"torch {spaced} language:Python",
-    ]
+# alias mapping from search name to actual class name
+_ALIAS: Dict[str, str] = {}
 
-def clean_chunk(chunk: str) -> str:
-    lines = [
-        ln for ln in chunk.splitlines()
-        if not ln.lstrip().startswith(("```", "#", ">"))
-    ]
-    return "\n".join(lines).strip()
+_ALIAS.update({
+    "SplitAttnConv": "SplitAttn",
+    "GLU"                   : "GLU",                  
+    "LKA"                   : "LKA",                    
+    "MixerBlock"            : "MixerBlock",     
+    "CSPELAN"            : "RepNCSPELAN4",
+    "RepConv"               : "RepConv",     
+    "Adapter"            : "AdapterLayerBase",
+    "LoRAAdapter"        : "LoRA",
+    "MoEExpert"          : "MOELinear",
+    "ConditionalLayerNorm"  : "ConditionalLayerNorm",
+    "FiLM"               : "FiLMLayer",     
+    "FireModule"         : "Fire",        
+    "ShuffleUnit"        : "ShuffleNetV2Block",
+    "DropBlock"          : "DropBlock2d", 
+    "StochasticDepth"    : "DropPath",   
+    "RMSNorm"               : "RMSNorm",
+    "RotaryEmbedding"       : "RotaryEmbedding",
+    "RelPosAttention"       : "RelPosAttention",
+    "SwiGLU"  : "SwiGLU", 
+    "GEGLU"                 : "GEGLU",
+    "GatedConv"             : "GatedConv",
+    "ESEBlock":             "eSEModule",
+    "DilatedResidualBlock": "Bottleneck",  
+    "CausalConv1D": "CausalConv1d",
+    "DenseBlock"         : "_DenseBlock",          
+    "TransitionBlock"    : "_Transition",        
+    "InceptionBlock"     : "InceptionA",              
+    "TemporalConvBlock"  : "TemporalBlock",          
+    "DropBlock"          : "DropBlock2d",
+    "StochasticDepth"    : "DropPath",
+    "HardSwishConv": "Hardswish", 
+    "ConvBnSiLU"            : "Conv",             
+    "UpBlock"          : "Up",          
+    "DownBlock"        : "Down",       
+    "DilatedConvBlock": "DilatedConv",
+    "RefineBlock"           : "RefineBlock",
+    "SPPBlock"              : "SPP",
+    "SPPFBlock"             : "SPPF",
+    "FocusStem"             : "Focus",                 
+    "FastConvBlock"         : "FastConvBlock",
+    "ECAAttention"          : "ECAAttention",
+    "MLPBlock"              : "MLP",
+    "HaloAttention"         : "HaloAttentionLSH",    
+    "QFormerBlock"         : "QFormer",
+    "LSTMCellBlock":        "LSTMCell",
+    "GRUCellBlock":         "GRUCell",
+    "NonLocalBlock"        : "NonLocal2d",
+    "BiFPNBlock"        : "BiFPN",       
+    "PANetBlock"        : "PAFPN",     
+    "ELANBlock"         : "ELAN",        
+    "QFormerBlock"      : "QFormer",      
+    "GELUFastBlock"    : "GELUFast",
+    "SRUppBlock"       : "SRUCell",
+    "AttentionAugmentedConv": "AugmentedConv",
+    "GBlock"              : "HighResolutionModule",  
+    "EESPBlock"           : "EESP",                 
+    "SwishConvBlock"      : "SwishConv",             
+    "HighwayConv"         : "HighwayConv",           
+    "ShuffleUnit"          : "InvertedResidual",    
+    "SEBottleneck"         : "ResNestBottleneck",  
+    "DCNv3Block"           : "ModulatedDeformConv2dPack",  
+    "DeformableConv2d"     : "DeformConv2dPack",    
+    "AntiAliasedResBlock"  : "BlurPool",    
+    "ConvMixerBlock"   : "ConvMixer",   
+    "SparseConvBlock"  : "Conv3d",     
+    "ReZeroBlock": "RZTXEncoderLayer",
+})
+
+
+def _canonical(name: str) -> str:
+    """Return the actual class identifier to look for inside a source file."""
+    return _ALIAS.get(name, name)
+
+
+def is_good_block(src: str) -> bool:
+    return src.count("\n") <= _MAX_LINES
+
+
+def extract_class(src: str, target: str) -> str:
+    """
+    Extract a single class block by name, or return whole file if ≤800 lines.
+    """
+    for m in _CLASS_RE.finditer(src):
+        if m.group("name") == target:
+            body = textwrap.dedent(m.group(0))
+            return f"import torch, torch.nn as nn\n\n{body}\n"
+    if is_good_block(src):
+        log.warning("⚠️ class %s not found – returning full file", target)
+        return src
+    raise ValueError(f"{target} not found in source")
+
+BLOCKS_100: List[str] = [
+    "ConvNeXtBlock",
+    "SwinTransformerBlock",
+    "TransformerEncoderLayer",
+    "ConformerBlock",
+    "GhostBottleneck",
+    "MBConv",
+    "FusedMBConv",
+    "InvertedResidual",
+    "Bottleneck",
+    "ResidualBlock",
+    "SqueezeExcitation",
+    "DepthwiseSeparableConv",
+    "GLU",
+    "SplitAttnConv",
+    "SEBottleneck",
+    "SKConv",
+    "CBAMBlock",
+    "ASPP",
+    "GhostModule",
+    "OctaveConv",
+    "AntiAliasedResBlock",
+    "DeformableConv2d",
+    "DCNv3Block",
+    "RepLKBlock",
+    "LKA",
+    "PatchEmbed",
+    "PatchMerging",
+    "MixerBlock",
+    "MetaFormerBlock",
+    "ConvMixerBlock",
+    "MaxVitBlock",
+    "SparseConvBlock",
+    "ShuffleUnit",
+    "FireModule",
+    "Focus",
+    "CSPBlock",
+    "CSPELAN",
+    "RepConv",
+    "DropPath",
+    "StochasticDepth",
+    "DropBlock",
+    "LayerScaleBlock",
+    "ReZeroBlock",
+    "FiLM",
+    "Adapter",
+    "LoRAAdapter",
+    "MoEExpert",
+    "ConditionalLayerNorm",
+    "RMSNorm",
+    "RotaryEmbedding",
+    "RelPosAttention",
+    "MultiheadAttention",
+    "FeedForward",
+    "SwiGLU",
+    "GEGLU",
+    "GatedConv",
+    # Missing: HighwayConv – data must be str, not NoneType
+    # "HighwayConv",
+    "DilatedResidualBlock",
+    "CausalConv1D",
+    "TemporalConvBlock",
+    "DenseBlock",
+    "TransitionBlock",
+    "InceptionBlock",
+    "ESEBlock",
+    "HardSwishConv",
+    # "SwishConvBlock",  
+    "ConvBnSiLU",
+    # "EESPBlock",
+    # "PConv",
+    "DilatedConvBlock",
+    "RefineBlock",
+    "UpBlock",
+    "DownBlock",
+    "DoubleConv",
+    # "UNetSkipConnectionBlock",
+    "CrossAttention",
+    "QFormerBlock",
+    # Missing: GELUFastBlock – data must be str, not NoneType
+    # "GELUFastBlock",
+    "LSTMCellBlock",
+    "GRUCellBlock",
+    "SRUppBlock",
+    # Missing: BiFPNBlock – data must be str, not NoneType
+    # "BiFPNBlock",
+    # "FPNBlock",
+    # Missing: PANetBlock – data must be str, not NoneType
+    # "PANetBlock",
+    # Missing: ELANBlock – data must be str, not NoneType
+    # "ELANBlock",
+    "AttentionAugmentedConv",
+    "NonLocalBlock",
+    "GBlock",
+    # "DConvBranch",
+    "SPPBlock",
+    "SPPFBlock",
+    # "FocusStem",
+    # Missing: FastConvBlock – data must be str, not NoneType
+    # "FastConvBlock",
+    # "GDFNBlock",
+    # Missing: ECAAttention – data must be str, not NoneType
+    # "ECAAttention",
+    # Missing: MLPBlock – data must be str, not NoneType
+    # "MLPBlock",
+    "WindowAttention",
+    # Missing: HaloAttention – data must be str, not NoneType
+    # "HaloAttention",
+    "MobileViTBlock",
+]
+
+
+DEFAULT_SOURCES: Dict[str, Tuple[str, str]] = {
+    "ConvNeXtBlock"         : ("huggingface/pytorch-image-models" , "timm/models/convnext.py"),
+    "SwinTransformerBlock"  : ("microsoft/Swin-Transformer"        , "models/swin_transformer_v2.py"),
+    "TransformerEncoderLayer": ("pytorch/pytorch"                  , "torch/nn/modules/transformer.py"),
+    "ConformerBlock"        : ("lucidrains/conformer"              , "conformer/conformer.py"),
+    "GhostBottleneck"       : ("huawei-noah/Efficient-AI-Backbones", "ghostnet_pytorch/ghostnet.py"),
+    "MBConv"                : ("d-li14/efficientnetv2.pytorch"    , "effnetv2.py"),
+    "FusedMBConv"           : ("WZMIAOMIAO/deep-learning-for-image-processing",
+                               "pytorch_classification/Test11_efficientnetV2/model.py"),
+    "InvertedResidual"      : ("pytorch/vision"                    , "torchvision/models/shufflenetv2.py"),
+    "Bottleneck"            : ("pytorch/vision"                    , "torchvision/models/resnet.py"),
+    "ResidualBlock"         : ("leftthomas/ACNet"                  , "model.py"),
+    "SqueezeExcitation"     : ("WZMIAOMIAO/deep-learning-for-image-processing",
+                               "pytorch_classification/Test10_regnet/model.py"),
+    "DepthwiseSeparableConv": ("rwightman/gen-efficientnet-pytorch", "geffnet/efficientnet_builder.py"),
+    "GLU"                   : ("lucidrains/conformer"              , "conformer/conformer.py"),
+    "SplitAttnConv"         : ("huggingface/pytorch-image-models"  , "timm/layers/split_attn.py"),
+    "SKConv"                : ("developer0hye/SKNet-PyTorch"       , "sknet.py"),
+    "CBAMBlock"             : ("xmu-xiaoma666/External-Attention-pytorch", "model/attention/CBAM.py"),
+    "ASPP"                  : ("pytorch/vision"                   , "torchvision/models/segmentation/deeplabv3.py"),
+    "GhostModule"           : ("huawei-noah/Efficient-AI-Backbones", "ghostnet_pytorch/ghostnet.py"),
+    "OctaveConv"            : ("d-li14/octconv.pytorch"            , "octconv.py"),
+    "RepLKBlock"            : ("DingXiaoH/RepLKNet-pytorch"        , "replknet.py"),
+    "LKA"                   : ("Visual-Attention-Network/VAN-Classification", "models/van.py"),
+    "PatchEmbed"            : ("microsoft/Swin-Transformer"        , "models/swin_transformer_v2.py"),
+    "PatchMerging"          : ("microsoft/Swin-Transformer"        , "models/swin_transformer_v2.py"),
+    "MixerBlock"            : ("huggingface/pytorch-image-models"  , "timm/models/mlp_mixer.py"),
+    "MetaFormerBlock"       : ("huggingface/pytorch-image-models"  , "timm/models/metaformer.py"),
+    "ConvMixerBlock"        : ("huggingface/pytorch-image-models"  , "timm/models/convmixer.py"),
+    "MaxVitBlock"           : ("pytorch/vision"                   , "torchvision/models/maxvit.py"),
+    "SparseConvBlock"       : ("mit-han-lab/torchsparse", "torchsparse/nn/modules/conv.py"),
+    "ShuffleUnit"           : ("pytorch/vision"                   , "torchvision/models/shufflenetv2.py"),
+    "SEBottleneck"          : ("huggingface/pytorch-image-models", "timm/models/resnest.py"),
+    "DCNv3Block"            : ("open-mmlab/mmcv", "mmcv/ops/modulated_deform_conv.py"),
+    "DeformableConv2d"      : ("open-mmlab/mmcv", "mmcv/ops/deform_conv.py"),
+    "AntiAliasedResBlock"   : ("adobe/antialiased-cnns", "antialiased_cnns/blurpool.py"),
+    "FireModule"            : ("pytorch/vision", "torchvision/models/squeezenet.py"),
+    "Focus"                 : ("ultralytics/yolov5", "models/common.py"),
+    "CSPBlock"              : ("argusswift/YOLOv4-pytorch", "model/backbones/CSPDarknet53.py"),
+    "CSPELAN"              : ("ultralytics/ultralytics", "ultralytics/nn/modules/block.py"),
+    "RepConv"               : ("ultralytics/ultralytics", "ultralytics/nn/modules/conv.py"),
+    "DropPath"              : ("huggingface/pytorch-image-models", "timm/layers/drop.py"),
+    "StochasticDepth"       : ("rwightman/pytorch-image-models", "timm/layers/drop.py"),
+    "DropBlock"             : ("rwightman/pytorch-image-models", "timm/layers/drop.py"),
+    "LayerScaleBlock"       : ("huggingface/pytorch-image-models", "timm/models/cait.py"),
+    "ReZeroBlock"           : ("majumderb/rezero", "rezero/transformer/rztx.py"),
+    "FiLM"                  : ("KdaiP/1D-Condition-method-pytorch", "layers.py"),
+    "Adapter"               : ("adapter-hub/adapters", "src/adapters/methods/adapter_layer_base.py"),
+    "LoRAAdapter"           : ("adapter-hub/adapters", "src/adapters/methods/lora.py"),
+    "MoEExpert"             : ("giangdip2410/HyperRouter", "linear.py"),
+    "ConditionalLayerNorm"  : ("KdaiP/1D-Condition-method-pytorch", "layers.py"),
+    "RMSNorm"               : ("lucidrains/x-transformers", "x_transformers/x_transformers.py"),
+    "RotaryEmbedding"       : ("lucidrains/rotary-embedding-torch", "rotary_embedding_torch/rotary_embedding_torch.py"),
+    "RelPosAttention"       : ("huggingface/pytorch-image-models", "timm/models/vision_transformer_relpos.py"),
+    "MultiheadAttention"    : ("pytorch/pytorch", "torch/nn/modules/activation.py"),
+    "FeedForward"           : ("lucidrains/DALLE-pytorch", "dalle_pytorch/transformer.py"),
+    "SwiGLU"                : ("lucidrains/PaLM-pytorch", "palm_pytorch/palm_lite.py"),
+    "GEGLU"                 : ("lucidrains/DALLE-pytorch", "dalle_pytorch/transformer.py"),
+    "GatedConv"             : ("rtqichen/ffjord", "lib/layers/diffeq_layers/basic.py"),
+    "UpBlock"               : ("milesial/Pytorch-UNet", "unet/unet_parts.py"),
+    "DownBlock"             : ("milesial/Pytorch-UNet", "unet/unet_parts.py"),
+    "UNetSkipConnectionBlock": ("junyanz/pytorch-CycleGAN-and-pix2pix", "models/networks.py"),
+    "PConv"                 : ("NVIDIA/partialconv", "models/partialconv2d.py"),
+    "TemporalConvBlock"     : ("locuslab/TCN", "TCN/tcn.py"),
+    "CausalConv1D"          : ("jakepoz/rnnt", "rnnt/causalconv.py"),
+    "DilatedResidualBlock"  : ("open-mmlab/mmsegmentation", "mmseg/models/backbones/resnet.py"),
+    "DenseBlock"            : ("pytorch/vision", "torchvision/models/densenet.py"),
+    "TransitionBlock"       : ("pytorch/vision", "torchvision/models/densenet.py"),
+    "InceptionBlock"        : ("pytorch/vision", "torchvision/models/inception.py"),
+    "HardSwishConv"         : ("ultralytics/yolov5", "utils/activations.py"),
+    "ConvBnSiLU"           : ("ultralytics/yolov5", "models/common.py"),
+    "ESEBlock"              : ("youngwanLEE/centermask2", "centermask/modeling/backbone/vovnet.py"),
+    "DilatedConvBlock"      : ("wutianyiRosun/CGNet", "model/CGNet.py"),
+    "RefineBlock"           : ("NVlabs/LSGM", "score_sde/layers.py"),
+    "CrossAttention"        : ("Stability-AI/stablediffusion", "ldm/modules/attention.py"),
+    "QFormerBlock"          : ("kyegomez/qformer", "qformer/model.py"),
+    "LSTMCellBlock"         : ("pytorch/pytorch", "torch/nn/modules/rnn.py"),
+    "GRUCellBlock"          : ("pytorch/pytorch", "torch/nn/modules/rnn.py"),
+    "SRUppBlock"            : ("asappresearch/sru", "sru/modules.py"),
+    "FPNBlock"              : ("airctic/efficientdet-pytorch", "efficientdet/bi_fpn.py"),
+    "WindowAttention"       : ("microsoft/Swin-Transformer", "models/swin_transformer_v2.py"),
+    "MobileViTBlock"        : ("apple/ml-cvnets", "cvnets/modules/mobilevit_block.py"),
+    
+    # ───────── Missing or Not Found sources (commented out) ─────────
+    # The following entries were skipped because either GitHub did not return file content
+    # or the expected class could not be found in the fetched file.
+    # Uncomment and update the repo/path when verified a new location.
+    
+    # "HighwayConv"         : ("shangeth/Highway-Convolution-PyTorch", "highway_conv.py"),
+    # "GELUFastBlock"       : ("lucidrains/PaLM-pytorch", "palm_pytorch/gelu_fast.py"),
+    # "BiFPNBlock"          : ("airctic/efficientdet-pytorch", "efficientdet/bi_fpn.py"),
+    # "PANetBlock"          : ("Megvii-BaseDetection/YOLOX", "yolox/models/pafpn.py"),
+    # "ELANBlock"           : ("ultralytics/yolor", "models/network_blocks.py"),
+    # "FastConvBlock"       : ("facebookresearch/ConvNeXt", "models/fast_conv.py"),
+    # "ECAAttention"        : ("xmu-xiaoma666/ECANet", "models/eca_module.py"),
+    # "MLPBlock"            : ("google/flax", "flax/linen/linear.py"),
+    # "HaloAttention"       : ("lucidrains/halo-attention", "halo_attention/halo_attention.py"),
+}

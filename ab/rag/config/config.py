@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # GitHub API
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or "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"
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or "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"
 CACHE_FILE = "search_cache.db"
 MODEL_NAME = "all-MiniLM-L6-v2"
 GENERATOR_MODEL = "gpt2"
