@@ -10,10 +10,6 @@ SEARCH_URL = "https://api.github.com/search/code"
 _MIN_REMAIN = 2
 
 log = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
-)
 
 def search_code(query: str, per_page: int = 10, page: int = 1) -> list:
     """
