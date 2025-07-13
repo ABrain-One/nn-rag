@@ -46,7 +46,6 @@ _ALIAS.update({
     "TransitionBlock"    : "_Transition",        
     "InceptionBlock"     : "InceptionA",              
     "TemporalConvBlock"  : "TemporalBlock",          
-    "DropBlock"          : "DropBlock2d",
     "HardSwishConv": "Hardswish", 
     "ConvBnSiLU"            : "Conv",             
     "UpBlock"          : "Up",          
