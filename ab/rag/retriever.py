@@ -8,11 +8,7 @@ from .utils.github_utils import search_code, fetch_raw
 from .utils.query_helpers import extract_class, _canonical, DEFAULT_SOURCES, BLOCKS_100
 
 log = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s – %(message)s",
-)
-
+# Logging configuration moved to the __main__ block to avoid interfering with user settings.
 class Retriever:
     def best_path(self, name: str) -> Tuple[str, str]:
         # Use a default path if available
