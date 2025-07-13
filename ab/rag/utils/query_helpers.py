@@ -47,7 +47,6 @@ _ALIAS.update({
     "InceptionBlock"     : "InceptionA",              
     "TemporalConvBlock"  : "TemporalBlock",          
     "DropBlock"          : "DropBlock2d",
-    "StochasticDepth"    : "DropPath",
     "HardSwishConv": "Hardswish", 
     "ConvBnSiLU"            : "Conv",             
     "UpBlock"          : "Up",          
