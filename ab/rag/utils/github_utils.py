@@ -1,52 +1,48 @@
+import os
 import time
-import shelve
-from github import Github, Auth, RateLimitExceededException, GithubException
-from config.config import GITHUB_TOKEN, CACHE_FILE
+import logging
+import requests
+from .cache import load, save
+from ..config.config import GITHUB_TOKEN
+HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
+SEARCH_URL = "https://api.github.com/search/code"
+_MIN_REMAIN = 2
 
-# Create a GitHub instance using the token from config
-g = Github(auth=Auth.Token(GITHUB_TOKEN))
+log = logging.getLogger(__name__)
 
-def wait_for_rate_limit():
-    core_limit = g.get_rate_limit().core
-    reset_timestamp = core_limit.reset.timestamp()
-    current_timestamp = time.time()
-    wait_time = reset_timestamp - current_timestamp + 5  # extra buffer
-    print(f"Rate limit exceeded. Waiting for {wait_time:.0f} seconds...")
-    time.sleep(wait_time)
+def search_code(query: str, per_page: int = 10, page: int = 1) -> list:
+    """
+    Search GitHub code using the REST API, with simple rate-limit handling.
+    """
+    cache_key = f"gh::{query}"
+    hits = load(cache_key)
+    if hits is None:
+        r = requests.get(
+            SEARCH_URL,
+            headers=HEADERS,
+            params={"q": query, "per_page": per_page, "page": page},
+            timeout=30,
+        )
+        remain = int(r.headers.get("X-RateLimit-Remaining", "0"))
+        if remain < _MIN_REMAIN:
+            reset = int(r.headers.get("X-RateLimit-Reset", 0))
+            wait = max(1, reset - time.time() + 1)
+            log.info("Sleeping %.1fs for rate-limit", wait)
+            time.sleep(wait)
+        r.raise_for_status()
+        hits = r.json().get("items", [])
+        save(cache_key, hits)
+    return hits
 
-def build_query(base_keyword: str, qualifiers: dict) -> str:
-    query = f"{base_keyword} in:readme in:description"
-    for key, value in qualifiers.items():
-        if value:
-            query += f" {key}:{value}"
-    return query
 
-def search_repositories_with_cache(query: str, max_results: int = 100) -> list[dict]:
-    with shelve.open(CACHE_FILE) as cache:
-        if query in cache:
-            print("Using cached repository results.")
-            return cache[query]
-        else:
-            while True:
-                try:
-                    repos = g.search_repositories(query, sort="stars", order="desc")
-                    break
-                except RateLimitExceededException:
-                    wait_for_rate_limit()
-                except GithubException as e:
-                    print("GitHub Exception:", e)
-                    return []
-            repo_list = []
-            count = 0
-            for repo in repos:
-                repo_list.append({
-                    "full_name": repo.full_name,
-                    "stars": repo.stargazers_count,
-                    "url": repo.html_url,
-                    "description": repo.description or ""
-                })
-                count += 1
-                if count >= max_results:
-                    break
-            cache[query] = repo_list
-            return repo_list
+def fetch_raw(repo: str, path: str, branch: str = "main") -> str:
+    """
+    Download raw file content from GitHub (try main then master).
+    """
+    url = f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
+    r = requests.get(url, headers=HEADERS, timeout=15)
+    if r.status_code == 200:
+        return r.text
+    if branch == "main":
+        return fetch_raw(repo, path, branch="master")
+    r.raise_for_status()
