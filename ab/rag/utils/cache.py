@@ -10,7 +10,9 @@ TTL = 86_400  # seconds (24h)
 
 
 def _cache_path(key: str) -> Path:
-    return _JSON / f"{hash(key)}.json"
+    import hashlib
+    stable_hash = hashlib.sha1(key.encode()).hexdigest()
+    return _JSON / f"{stable_hash}.json"
 
 
 def load(key: str):
