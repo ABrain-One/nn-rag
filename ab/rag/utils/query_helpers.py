@@ -1,18 +1,11 @@
-import re
 import textwrap
 import logging
 from typing import Dict
 from typing import List, Tuple
+from ..config.config import _MAX_LINES, _CLASS_RE
 
 log = logging.getLogger(__name__)
 
-# limit for full-file fallback
-_MAX_LINES = 800
-
-_CLASS_RE = re.compile(
-    r"\bclass\s+(?P<name>[A-Za-z_]\w*)\s*\([^)]*\):[\s\S]*?(?=\bclass\s|\Z)",
-    re.M,
-)
 
 # alias mapping from search name to actual class name
 _ALIAS: Dict[str, str] = {}

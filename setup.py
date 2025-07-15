@@ -20,7 +20,7 @@ def version():
 setup(
     name="nn-rag",
     version=version(),
-    description="Neural Retrieval-Augmented Generation for GitHub Search",
+    description="Neural Retrieval-Augmented Generation for GitHub code blocks",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     author="ABrain One and contributors",
