@@ -3,10 +3,7 @@ import time
 import logging
 import requests
 from .cache import load, save
-from ..config.config import GITHUB_TOKEN
-HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
-SEARCH_URL = "https://api.github.com/search/code"
-_MIN_REMAIN = 2
+from ..config.config import SEARCH_URL, HEADERS, _MIN_REMAIN
 
 log = logging.getLogger(__name__)
 

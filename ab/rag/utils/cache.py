@@ -1,13 +1,7 @@
 import json
 import time
+from ..config.config import _JSON, TTL
 from pathlib import Path
-
-_ROOT = Path.home() / ".cache" / "nn-rag"
-_ROOT.mkdir(exist_ok=True)
-_JSON = _ROOT / "json"
-_JSON.mkdir(exist_ok=True)
-TTL = 86_400  # seconds (24h)
-
 
 def _cache_path(key: str) -> Path:
     import hashlib
