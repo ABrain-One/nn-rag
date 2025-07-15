@@ -13,7 +13,7 @@ _JSON.mkdir(exist_ok=True)
 TTL = 86_400  # seconds (24h)
 
 # GitHub API
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or "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"
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or "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"
 
 _MAX_LINES = 800
 
