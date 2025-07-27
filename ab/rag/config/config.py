@@ -18,8 +18,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN") or "github_pat_11A242DMY0Bvrrd7drKUDp_A
 _MAX_LINES = 800
 
 _CLASS_RE = re.compile(
-    r"\bclass\s+(?P<name>[A-Za-z_]\w*)\s*\([^)]*\):[\s\S]*?(?=\bclass\s|\Z)",
-    re.M,
+    r"(?ms)^\s*class\s+(?P<name>[A-Za-z_]\w+)\s*(?:\([^)]*\))?\s*:\s*[\s\S]*?(?=^\s*class\s+\w+\s*(?:\(|:)|\Z)"
 )
 HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"} if GITHUB_TOKEN else {}
 SEARCH_URL = "https://api.github.com/search/code"
