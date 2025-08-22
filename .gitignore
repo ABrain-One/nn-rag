@@ -1,0 +1,10 @@
+/gitignore
+/rag_nn/utils/__pycache__
+/rag_nn/core/__pycache__
+/rag_nn/config/__pycache__
+/rag_nn/tests/__pycache__
+/output
+/venv
+/vscode
+/cache
+/rag_nn/__pycache__

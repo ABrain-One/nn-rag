@@ -1,0 +1,22 @@
+[
+    "Conv",
+    "ResNet",
+    "DenseNet",
+    "MobileNet",
+    "EfficientNet",
+    "SENet",
+    "CBAM",
+    "ECA",
+    "SKNet",
+    "ResNeXt",
+    "RegNet",
+    "EfficientNetV2",
+    "ConvNeXt",
+    "Swin",
+    "ViT",
+    "DeiT",
+    "MLP-Mixer",
+    "gMLP",
+    "RepVGG",
+    "RepMLP"
+]
