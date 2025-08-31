@@ -1,5 +1,4 @@
 python-dotenv>=1.0.0
 dotenv
 httpx>=0.24.0
-torch>=1.9.0
 libcst
