@@ -1,0 +1,92 @@
+{
+  "pytorch/vision": {
+    "url": "https://github.com/pytorch/vision.git",
+    "priority": 1,
+    "paths": ["torchvision/models", "torchvision/ops"],
+    "description": "Most important for computer vision"
+  },
+  "huggingface/pytorch-image-models": {
+    "url": "https://github.com/huggingface/pytorch-image-models.git",
+    "priority": 1,
+    "paths": ["timm", "timm/layers"],
+    "description": "Essential for models"
+  },
+  "pytorch/pytorch": {
+    "url": "https://github.com/pytorch/pytorch.git",
+    "priority": 2,
+    "paths": ["torch/nn/modules", "torch/nn/functional"],
+    "description": "Core PyTorch"
+  },
+  "open-mmlab/mmdetection": {
+    "url": "https://github.com/open-mmlab/mmdetection.git",
+    "priority": 1,
+    "paths": ["mmdet/models", "mmdet/ops", "projects/EfficientDet/efficientdet"],
+    "description": "Detection models"
+  },
+  "open-mmlab/mmsegmentation": {
+    "url": "https://github.com/open-mmlab/mmsegmentation.git",
+    "priority": 1,
+    "paths": ["mmseg/models", "mmseg/ops"],
+    "description": "Segmentation models"
+  },
+  "facebookresearch/detectron2": {
+    "url": "https://github.com/facebookresearch/detectron2.git",
+    "priority": 1,
+    "paths": ["detectron2/modeling", "detectron2/layers"],
+    "description": "Facebook detection models"
+  },
+  "ultralytics/yolov5": {
+    "url": "https://github.com/ultralytics/yolov5.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "YOLO family"
+  },
+  "ultralytics/yolov8": {
+    "url": "https://github.com/ultralytics/ultralytics.git",
+    "priority": 1,
+    "paths": ["ultralytics/nn", "ultralytics/models"],
+    "description": "Latest YOLO"
+  },
+  "WongKinYiu/yolov7": {
+    "url": "https://github.com/WongKinYiu/yolov7.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "YOLO variants"
+  },
+  "WongKinYiu/yolov9": {
+    "url": "https://github.com/WongKinYiu/yolov9.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "Latest YOLO variants"
+  },
+  "facebookresearch/mae": {
+    "url": "https://github.com/facebookresearch/mae.git",
+    "priority": 2,
+    "paths": ["models_mae", "util"],
+    "description": "Masked Autoencoder"
+  },
+  "facebookresearch/dino": {
+    "url": "https://github.com/facebookresearch/dino.git",
+    "priority": 2,
+    "paths": ["vision_transformer", "utils"],
+    "description": "Self-supervised learning"
+  },
+  "open-mmlab/mmocr": {
+    "url": "https://github.com/open-mmlab/mmocr.git",
+    "priority": 2,
+    "paths": ["mmocr/models", "mmocr/structures", "projects/ABCNet/abcnet/model"],
+    "description": "OCR models"
+  },
+  "open-mmlab/mmpose": {
+    "url": "https://github.com/open-mmlab/mmpose.git",
+    "priority": 2,
+    "paths": ["mmpose/models", "mmpose/structures"],
+    "description": "Pose estimation"
+  },
+  "open-mmlab/mmpretrain": {
+    "url": "https://github.com/open-mmlab/mmpretrain.git",
+    "priority": 2,
+    "paths": ["mmpretrain/models", "mmpretrain/structures"],
+    "description": "Pre-training models"
+  }
+}
