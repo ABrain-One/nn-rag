@@ -34,6 +34,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+# Import the block validator
+from .block_validator import BlockValidator
+
 # ----------------------------------------------------------------------------- #
 # Internal, deterministic sanitizer (no stub injection)
 # ----------------------------------------------------------------------------- #
@@ -1504,6 +1507,13 @@ class BlockExtractor:
         return "const"
 
     def _dfs_all(self, root: SymbolInfo) -> Tuple[Dict[str, ResolvedDependency], Set[str], List[str]]:
+        # Fundamental PyTorch classes that should not be included as dependencies
+        FUNDAMENTAL_TORCH_CLASSES = {
+            'torch.nn.modules.module.Module',
+            'torch.nn.parameter.Parameter',
+            'torch.Tensor'
+        }
+        
         resolved: Dict[str, ResolvedDependency] = {}
         unresolved: Set[str] = set()
         seen: Set[str] = set()
@@ -1513,6 +1523,11 @@ class BlockExtractor:
             if qname in seen:
                 return
             seen.add(qname)
+            
+            # Skip fundamental PyTorch classes
+            if qname in FUNDAMENTAL_TORCH_CLASSES:
+                return
+                
             sym = self.import_graph.symbol_table.get(qname)
             if not sym:
                 nm = qname.split(".")[-1]
@@ -1770,6 +1785,11 @@ class BlockExtractor:
 
     def _collect_import_lines_for_symbols(self, qnames: List[str], target_qname: str) -> List[str]:
         """Collect and de-dupe import lines from modules owning the given symbols (and the target)."""
+        # Fundamental PyTorch classes that should always be imported directly from torch.nn
+        FUNDAMENTAL_TORCH_CLASSES = {
+            'Module', 'Parameter', 'Tensor', 'Buffer', 'Sequential', 'ModuleList', 'ModuleDict'
+        }
+        
         module_keys: Set[str] = set()
         for q in list(qnames) + [target_qname]:
             if not q:
@@ -1803,6 +1823,11 @@ class BlockExtractor:
             if line.startswith("from .") or line.startswith("from .."):
                 continue
             import_symbols = self._extract_imported_symbols(line)
+            
+            # Skip imports of fundamental PyTorch classes from internal modules
+            if any(sym in FUNDAMENTAL_TORCH_CLASSES for sym in import_symbols):
+                if line.startswith("from torch.nn.modules.") or line.startswith("from torch.nn.parameter"):
+                    continue
             
             # Only include this import if at least one of its symbols is actually used
             if import_symbols:
@@ -1943,6 +1968,8 @@ class BlockExtractor:
         if "F" in all_imports:
             required_imports.append("import torch.nn.functional as F")
         # PyTorch-specific imports
+        if "Module" in all_imports:
+            required_imports.append("from torch.nn import Module")
         if "Parameter" in all_imports:
             required_imports.append("from torch.nn.parameter import Parameter")
         if "Tensor" in all_imports:
@@ -2169,6 +2196,9 @@ class BlockExtractor:
                 # Default to utility functions if we can't determine the kind
                 utility_functions.append(q)
         
+        # Track imported types to prevent duplicates
+        imported_types = set()
+        
         # Emit dependencies in correct order: inheritance-ordered classes first, then others by priority
         for q in ordered_classes + type_aliases_and_constants + utility_functions + classes_and_main_functions:
             if q in emitted_q:
@@ -2180,25 +2210,27 @@ class BlockExtractor:
             head_name = self._top_level_def_name(s.source_code)
             if head_name and head_name in seen_defs:
                 continue
+            
+            # Check if this dependency contains types that are already imported
+            if self._contains_duplicate_types(s.source_code, imported_types):
+                continue
                 
             out_lines.append(f"# ---- {q} ----")
-            # Strip indentation for constants to make them valid Python code
-            # Get the kind from the original SymbolInfo in the import_graph
-            original_sym = self.import_graph.symbol_table.get(q)
-            if original_sym and original_sym.kind == "const":
-                # Use the improved dedenting method that preserves relative indentation
-                dedented_code = self._dedent_code_block(s.source_code)
-                # Also replace relative imports in constants
-                cleaned_code = self._replace_relative_imports(dedented_code)
-                out_lines.append(cleaned_code.rstrip())
-            else:
-                # Replace relative imports with absolute imports in the source code
-                cleaned_source = self._replace_relative_imports(s.source_code)
+            
+            # Clean and validate the source code before emitting
+            cleaned_source = self._clean_and_validate_source_code(s.source_code, q)
+            if cleaned_source:
                 out_lines.append(cleaned_source.rstrip())
-            out_lines.append("")
-            if head_name:
-                seen_defs.add(head_name)
-            emitted_q.add(q)
+                out_lines.append("")
+                if head_name:
+                    seen_defs.add(head_name)
+                emitted_q.add(q)
+                
+                # Track the types that were imported
+                self._track_imported_types(cleaned_source, imported_types)
+            else:
+                # Skip this dependency if it couldn't be cleaned properly
+                continue
         
         # Now collect and add required imports AFTER dependency analysis
         all_dependency_symbols = ordered_classes + type_aliases_and_constants + utility_functions + classes_and_main_functions
@@ -2332,6 +2364,158 @@ class BlockExtractor:
                 dedented_lines.append(line)
         
         return '\n'.join(dedented_lines)
+
+    def _clean_and_validate_source_code(self, source_code: str, qname: str) -> Optional[str]:
+        """Clean and validate source code before emitting to prevent syntax errors."""
+        if not source_code or not source_code.strip():
+            return None
+        
+        try:
+            # First, try to parse the code to check for syntax errors
+            ast.parse(source_code)
+        except SyntaxError:
+            # If there's a syntax error, try to clean it up
+            cleaned = self._clean_malformed_code(source_code, qname)
+            if cleaned:
+                try:
+                    # Verify the cleaned code parses
+                    ast.parse(cleaned)
+                    return cleaned
+                except SyntaxError:
+                    # If still can't parse, skip this dependency
+                    return None
+            else:
+                return None
+        
+        # If the code parses correctly, clean it up for emission
+        original_sym = self.import_graph.symbol_table.get(qname)
+        if original_sym and original_sym.kind == "const":
+            # Use the improved dedenting method that preserves relative indentation
+            dedented_code = self._dedent_code_block(source_code)
+            # Also replace relative imports in constants
+            cleaned_code = self._replace_relative_imports(dedented_code)
+            return cleaned_code
+        else:
+            # Replace relative imports with absolute imports in the source code
+            cleaned_source = self._replace_relative_imports(source_code)
+            return cleaned_source
+
+    def _clean_malformed_code(self, source_code: str, qname: str) -> Optional[str]:
+        """Attempt to clean malformed code that has syntax errors."""
+        if not source_code:
+            return None
+        
+        lines = source_code.splitlines()
+        cleaned_lines = []
+        
+        # Look for common patterns that cause issues
+        in_import_section = False
+        import_lines = []
+        in_parentheses = False
+        paren_count = 0
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Skip empty lines
+            if not stripped:
+                continue
+            
+            # Track parentheses for multi-line imports
+            if '(' in stripped:
+                paren_count += stripped.count('(')
+            if ')' in stripped:
+                paren_count += stripped.count(')')
+            
+            # Check if we're in a multi-line import
+            if paren_count > 0:
+                in_parentheses = True
+            else:
+                in_parentheses = False
+            
+            # Check if this is an import section
+            if stripped.startswith('from ') and ' import ' in stripped:
+                in_import_section = True
+                import_lines.append(line)
+                continue
+            elif stripped.startswith('import '):
+                in_import_section = True
+                import_lines.append(line)
+                continue
+            
+            # If we're in an import section and hit non-import code, end the section
+            if in_import_section and not (stripped.startswith('from ') or stripped.startswith('import ') or in_parentheses):
+                in_import_section = False
+                # Add all collected import lines
+                cleaned_lines.extend(import_lines)
+                import_lines = []
+            
+            # Skip lines that are just type names without proper context
+            if stripped.endswith(',') and not stripped.startswith(('def ', 'class ', 'if ', 'for ', 'while ')):
+                # This might be a malformed import line, skip it
+                continue
+            
+            # Skip lines that are just type names (common PyTorch type aliases)
+            pytorch_types = [
+                '_ratio_2_t,', '_ratio_3_t,', '_size_1_t,', '_size_2_opt_t,', '_size_2_t,',
+                '_size_3_opt_t,', '_size_3_t,', '_size_any_opt_t,', '_size_any_t,',
+                '_ratio_2_t', '_ratio_3_t', '_size_1_t', '_size_2_opt_t', '_size_2_t',
+                '_size_3_opt_t', '_size_3_t', '_size_any_opt_t', '_size_any_t'
+            ]
+            if stripped in pytorch_types:
+                continue
+            
+            # Skip orphaned closing parentheses
+            if stripped == ')' and not in_parentheses:
+                continue
+            
+            # Add valid lines
+            cleaned_lines.append(line)
+        
+        # Add any remaining import lines
+        if import_lines:
+            cleaned_lines.extend(import_lines)
+        
+        if not cleaned_lines:
+            return None
+        
+        return '\n'.join(cleaned_lines)
+
+    def _contains_duplicate_types(self, source_code: str, imported_types: set) -> bool:
+        """Check if source code contains types that are already imported."""
+        if not source_code:
+            return False
+        
+        # Common PyTorch type aliases to check for
+        pytorch_types = {
+            '_ratio_2_t', '_ratio_3_t', '_size_1_t', '_size_2_opt_t', '_size_2_t',
+            '_size_3_opt_t', '_size_3_t', '_size_any_opt_t', '_size_any_t'
+        }
+        
+        for line in source_code.splitlines():
+            stripped = line.strip()
+            for type_name in pytorch_types:
+                if type_name in stripped and type_name in imported_types:
+                    return True
+        
+        return False
+
+    def _track_imported_types(self, source_code: str, imported_types: set) -> None:
+        """Track which types have been imported to prevent duplicates."""
+        if not source_code:
+            return
+        
+        # Common PyTorch type aliases to track
+        pytorch_types = {
+            '_ratio_2_t', '_ratio_3_t', '_size_1_t', '_size_2_opt_t', '_size_2_t',
+            '_size_3_opt_t', '_size_3_t', '_size_any_opt_t', '_size_any_t'
+        }
+        
+        for line in source_code.splitlines():
+            stripped = line.strip()
+            for type_name in pytorch_types:
+                if type_name in stripped:
+                    imported_types.add(type_name)
     
     def _replace_relative_imports(self, source_code: str) -> str:
         """Replace relative imports with absolute imports in source code."""
@@ -2547,6 +2731,8 @@ def main():
     p.add_argument("--progress-every", type=int, default=10, help="Log progress every N blocks")
     p.add_argument("--index-mode", type=str, choices=("missing", "force", "skip"),
                    default="missing", help="Indexing policy: missing (default), force, or skip")
+    p.add_argument("--no-validate", action="store_true", help="Disable automatic validation and movement of valid blocks to 'block' directory")
+    p.add_argument("--cleanup-invalid", action="store_true", help="Remove invalid blocks after validation")
     args = p.parse_args()
 
     extractor = BlockExtractor(index_mode=args.index_mode)
@@ -2563,26 +2749,95 @@ def main():
             return res
         except Exception as e:
             return {"success": False, "reason": f"exception: {type(e).__name__}: {e}", "block_name": name}
+    
+    def validate_block_parallel(name: str) -> Tuple[str, Dict[str, Any]]:
+        """Validate a block in parallel and return (name, validation_result)."""
+        try:
+            if not args.no_validate:
+                validator = BlockValidator()
+                is_valid, error = validator.validate_and_move_block(name)
+                
+                validation_result = {
+                    "name": name,
+                    "status": "valid" if is_valid else "invalid",
+                    "moved_to_block_dir": is_valid,
+                    "error": error if not is_valid else None
+                }
+                
+                # Cleanup invalid blocks if requested
+                if args.cleanup_invalid and not is_valid:
+                    invalid_file = Path("generated_packages") / f"{name}.py"
+                    if invalid_file.exists():
+                        invalid_file.unlink()
+                        validation_result["cleaned_up"] = True
+                
+                return name, validation_result
+            else:
+                return name, {"name": name, "status": "skipped", "reason": "validation disabled"}
+        except Exception as e:
+            return name, {"name": name, "status": "validation_error", "error": str(e)}
 
     # Direct single
     if args.block:
         res = run_one(args.block)
+        
+        # Validate the single block
+        if not args.no_validate and res.get("success"):
+            name, validation_result = validate_block_parallel(args.block)
+            res["validation"] = validation_result
+        
         print(json.dumps(res, indent=2))
         return
 
     # Direct list
     if args.blocks:
         results = {b: run_one(b) for b in args.blocks}
+        
+        # Validate all blocks in parallel
+        if not args.no_validate:
+            with cf.ThreadPoolExecutor(max_workers=min(len(args.blocks), 4)) as executor:
+                validation_futures = [executor.submit(validate_block_parallel, b) for b in args.blocks]
+                validation_results = {}
+                
+                for future in cf.as_completed(validation_futures):
+                    name, validation_result = future.result()
+                    validation_results[name] = validation_result
+                
+                # Add validation results to extraction results
+                for name in args.blocks:
+                    if name in validation_results:
+                        results[name]["validation"] = validation_results[name]
+        
         print(json.dumps(results, indent=2))
         return
 
     # Retry failed
     if args.retry_failed:
         retried: Dict[str, Any] = {}
-        for item in list(extractor.failed_blocks):
+        failed_blocks_list = list(extractor.failed_blocks)
+        
+        for item in failed_blocks_list:
             retried[item] = run_one(item)
             if args.stop_on_fail and not retried[item].get("success"):
                 break
+        
+        # Validate retried blocks in parallel
+        if not args.no_validate:
+            successful_retries = [item for item in failed_blocks_list if retried[item].get("success")]
+            if successful_retries:
+                with cf.ThreadPoolExecutor(max_workers=min(len(successful_retries), 4)) as executor:
+                    validation_futures = [executor.submit(validate_block_parallel, item) for item in successful_retries]
+                    validation_results = {}
+                    
+                    for future in cf.as_completed(validation_futures):
+                        name, validation_result = future.result()
+                        validation_results[name] = validation_result
+                    
+                    # Add validation results to retry results
+                    for name in successful_retries:
+                        if name in validation_results:
+                            retried[name]["validation"] = validation_results[name]
+        
         print(json.dumps(retried, indent=2))
         return
 
@@ -2616,14 +2871,56 @@ def main():
     print(f"Starting batch extraction for {len(plan)} block(s) from {args.names_json} ...")
     batch_results: Dict[str, Any] = {}
     t0 = time.time()
+    
+    # Process blocks with immediate validation after each extraction
     for i, name in enumerate(plan, 1):
+        # Extract single block
         res = run_one(name)
         batch_results[name] = res
-        # save progress incrementally
+        
+        # Validate immediately after extraction (unless --no-validate is specified)
+        if not args.no_validate and res.get("success"):
+            try:
+                validator = BlockValidator()
+                is_valid, error = validator.validate_and_move_block(name)
+                
+                validation_result = {
+                    "name": name,
+                    "status": "valid" if is_valid else "invalid",
+                    "moved_to_block_dir": is_valid,
+                    "error": error if not is_valid else None
+                }
+                
+                # Cleanup invalid blocks if requested
+                if args.cleanup_invalid and not is_valid:
+                    invalid_file = Path("generated_packages") / f"{name}.py"
+                    if invalid_file.exists():
+                        invalid_file.unlink()
+                        validation_result["cleaned_up"] = True
+                
+                # Add validation result to batch results
+                batch_results[name]["validation"] = validation_result
+                
+                # Log validation result
+                if is_valid:
+                    print(f"✓ {name}: Validated and moved to block directory")
+                else:
+                    print(f"✗ {name}: Validation failed - {error}")
+                    
+            except Exception as e:
+                validation_result = {"name": name, "status": "validation_error", "error": str(e)}
+                batch_results[name]["validation"] = validation_result
+                print(f"✗ {name}: Validation error - {e}")
+        
+        # Save progress incrementally
         extractor._save_results()
-        if i % max(1, args.progress_every) == 0:
+        
+        # Progress reporting
+        if i % max(1, args.progress_every) == 0 or i == len(plan):
             ok_n = sum(1 for r in batch_results.values() if r.get("success"))
             print(f"[{i}/{len(plan)}] ok={ok_n} fail={i - ok_n} elapsed={time.time()-t0:.1f}s")
+        
+        # Check for stop on fail
         if args.stop_on_fail and not res.get("success"):
             print(f"Stopping on first failure: {name}")
             break
@@ -2638,6 +2935,34 @@ def main():
         "elapsed_sec": round(time.time() - t0, 3),
     }
     print(json.dumps(summary, indent=2))
+    
+    # Final validation summary (validation already done during extraction)
+    if not args.no_validate:
+        # Count blocks that were successfully validated and moved
+        validated_blocks = sum(1 for r in batch_results.values() 
+                              if r.get("success") and r.get("validation", {}).get("moved_to_block_dir"))
+        
+        print(f"\nValidation Summary:")
+        print(f"Total blocks processed: {len(batch_results)}")
+        print(f"Successfully extracted: {ok_n}")
+        print(f"Successfully validated and moved: {validated_blocks}")
+        print(f"Validation success rate: {(validated_blocks/ok_n*100):.1f}%" if ok_n > 0 else "Validation success rate: 0.0%")
+        
+        if args.cleanup_invalid:
+            # Clean up invalid blocks that weren't moved
+            cleanup_count = 0
+            for name, result in batch_results.items():
+                if result.get("success") and not result.get("validation", {}).get("moved_to_block_dir"):
+                    invalid_file = Path("generated_packages") / f"{name}.py"
+                    if invalid_file.exists():
+                        try:
+                            invalid_file.unlink()
+                            cleanup_count += 1
+                        except Exception as e:
+                            print(f"Failed to cleanup {name}: {e}")
+            
+            if cleanup_count > 0:
+                print(f"Cleaned up {cleanup_count} invalid blocks from generated_packages directory")
 
 
 if __name__ == "__main__":

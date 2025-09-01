@@ -134,3 +134,5 @@ checkpoints/
 # ab/rag/config/repo_config.json
 # ab/rag/config/block_names.json
 # ab/rag/config/nn_block_names.json
+
+block/
