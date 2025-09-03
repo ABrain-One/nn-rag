@@ -33,5 +33,5 @@ where = ['']
 include-package-data = true
 
 [tool.setuptools.package-data]
-'ab' = ['*.md']
+'ab' = ['*.md', '*.json']
 '*' = ['requirements.txt', 'README.md', 'LICENSE', 'version']
