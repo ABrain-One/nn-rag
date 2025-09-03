@@ -43,12 +43,16 @@ from typing import Dict, List, Optional, Tuple
 
 # ---------------- CLI ----------------
 
+def default_worker_count() -> int:
+    """Return the default number of parallel workers: min(32, 2 * CPU), at least 2."""
+    return max(2, min(32, (os.cpu_count() or 8) * 2))
+
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Compile/import check for generated NN blocks.")
     ap.add_argument("--dir", type=Path, default=Path("generated_packages"))
     ap.add_argument("--names", type=Path, default=None, help="JSON array of block names; look for <name>.py inside --dir")
     ap.add_argument("--pattern", type=str, default="*.py")
-    ap.add_argument("--workers", type=int, default=max(2, min(32, (os.cpu_count() or 8) * 2)))
+    ap.add_argument("--workers", type=int, default=default_worker_count())
     ap.add_argument("--timeout", type=int, default=15)
     ap.add_argument("--json-out", type=Path, default=None)
     ap.add_argument("--verbose", action="store_true")
