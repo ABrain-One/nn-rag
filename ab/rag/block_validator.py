@@ -125,8 +125,8 @@ class BlockValidator:
         target_file = self.block_dir / f"{block_name}.py"
         
         try:
-            # Copy the file to block directory
-            shutil.copy2(source_file, target_file)
+            # Move the file to block directory (not copy)
+            shutil.move(str(source_file), str(target_file))
             logger.info(f"Successfully moved {block_name} to block directory")
             return True
         except Exception as e:

@@ -134,6 +134,8 @@ def sanitize_generated_block(text: str) -> str:
         missing_imports.append("from projects.EfficientDet.efficientdet.bifpn import DepthWiseConvBlock")
     if "DownChannelBlock" in used_symbols and "DownChannelBlock" not in defined_symbols:
         missing_imports.append("from projects.EfficientDet.efficientdet.bifpn import DownChannelBlock")
+    if "Sequence" in used_symbols and "Sequence" not in defined_symbols:
+        missing_imports.append("from collections.abc import Sequence")
     
     # Insert missing imports after the header comment
     if missing_imports:
@@ -901,11 +903,13 @@ class BlockExtractor:
             ignore_set.update(dir(__builtins__))
         except Exception:
             pass
-        ignore_set.update({"torch", "nn", "F", "self", "super"})
-        typing_names = {"Any", "Dict", "List", "Optional", "Tuple", "Union", "Set",
-                        "Type", "Callable", "Sequence", "Mapping", "Iterator", "Iterable",
-                        "Sized", "overload", "Literal", "TypedDict"}
-        ignore_set.update(typing_names)
+        ignore_set.update({
+            "torch", "nn", "F", "self", "super", "Config", "ConfigDict", "MODULE2PACKAGE",
+            "Parameter", "Self", "Tensor", "_copy_to_script_wrapper", "container_abcs",
+            "end_id", "init", "islice", "namedtuple", "start_id", "Sequence"
+        })
+        # Note: Typing symbols should be resolved to imports, not ignored
+        # They will be handled by the dependency resolution system
         ignore_set.update(self._get_stdlib_modules())
         
         # Add common standard library symbols that should be ignored
@@ -951,7 +955,11 @@ class BlockExtractor:
             "itertools", "functools", "pathlib", "shutil", "tempfile", "logging", "warnings", "traceback",
             "subprocess", "multiprocessing", "concurrent", "asyncio", "socket",
             "importlib", "difflib", "argparse", "io", "types", "platform", "uuid",
-            "urllib", "importlib.util", "enum", "os", "yaml", "rich", "numpy"
+            "urllib", "importlib.util", "enum", "os", "yaml", "rich", "numpy",
+            "abc", "inspect", "threading", "contextlib", "copy", "weakref", "gc",
+            "operator", "heapq", "bisect", "array", "struct", "hashlib", "hmac",
+            "base64", "binascii", "zlib", "gzip", "bz2", "lzma", "zipfile", "tarfile",
+            "itertools", "collections", "collections.abc"
         ]
         for module_name in common_stdlib:
             try:
@@ -2021,6 +2029,10 @@ class BlockExtractor:
             if collections_items:
                 required_imports.append(f"from collections import {', '.join(collections_items)}")
         
+        # Add collections.abc imports
+        if "Sequence" in all_imports:
+            required_imports.append("from collections.abc import Sequence")
+        
         # Add logging imports
         if "Logger" in all_imports or "FileHandler" in all_imports or "LogRecord" in all_imports:
             logging_items = []
@@ -2725,8 +2737,8 @@ def main():
     p.add_argument("--limit", type=int, default=None, help="Max number of names to process from the list")
     p.add_argument("--start-from", type=str, default=None,
                    help="Skip names until (and including) this one, then start")
-    p.add_argument("--redo-existing", action="store_true",
-                   help="Re-extract blocks that already appear in extraction_results.json")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="Skip blocks that already appear in extraction_results.json (default: process all blocks)")
     p.add_argument("--stop-on-fail", action="store_true", help="Stop batch as soon as one extraction fails")
     p.add_argument("--progress-every", type=int, default=10, help="Log progress every N blocks")
     p.add_argument("--index-mode", type=str, choices=("missing", "force", "skip"),
@@ -2848,7 +2860,8 @@ def main():
         print(json.dumps({"success": False, "reason": f"names file error: {e}", "path": str(args.names_json)}, indent=2))
         return
 
-    # Resume support: skip already-extracted unless --redo-existing
+    # Default behavior: process all blocks every time
+    # Only skip already-extracted blocks if --skip-existing is specified (opposite of --redo-existing)
     already = {x.get("block_name") for x in extractor.extracted_blocks} if extractor.extracted_blocks else set()
     if args.start_from:
         if args.start_from in names:
@@ -2860,7 +2873,9 @@ def main():
     for n in names:
         if args.limit and len(plan) >= args.limit:
             break
-        if not args.redo_existing and n in already:
+        # Process all blocks by default, only skip if --skip-existing is specified
+        # (This is the opposite of the original --redo-existing behavior)
+        if hasattr(args, 'skip_existing') and args.skip_existing and n in already:
             continue
         plan.append(n)
 

@@ -136,3 +136,6 @@ checkpoints/
 # ab/rag/config/nn_block_names.json
 
 block/
+=0.23.6
+.venv/
+=1.7.0
