@@ -1,0 +1,158 @@
+{
+  "pytorch/vision": {
+    "url": "https://github.com/pytorch/vision.git",
+    "priority": 1,
+    "paths": [
+      "torchvision/models",
+      "torchvision/models/feature_extraction",
+      "torchvision/ops",
+      "torchvision/utils",
+      "torchvision/transforms",
+      "torchvision/_utils.py",
+      "torchvision/_internally_replaced_utils.py"
+    ],
+    "description": "Most important for computer vision"
+  },
+  "huggingface/pytorch-image-models": {
+    "url": "https://github.com/huggingface/pytorch-image-models.git",
+    "priority": 1,
+    "paths": ["timm", "timm/layers", "timm/models", "timm/utils"],
+    "description": "Essential for models"
+  },
+  "pytorch/pytorch": {
+    "url": "https://github.com/pytorch/pytorch.git",
+    "priority": 2,
+    "paths": [
+      "torch/nn/modules",
+      "torch/nn/functional",
+      "torch/nn/init.py",
+      "torch/nn/common_types.py",
+      "torch/nn/modules/utils.py",
+      "torch/utils/checkpoint.py",
+      "torch/hub.py"
+    ],
+    "description": "Core PyTorch"
+  },
+  "open-mmlab/mmdetection": {
+    "url": "https://github.com/open-mmlab/mmdetection.git",
+    "priority": 1,
+    "paths": ["mmdet/models", "mmdet/ops", "mmdet/structures", "projects/EfficientDet/efficientdet"],
+    "description": "Detection models"
+  },
+  "open-mmlab/mmsegmentation": {
+    "url": "https://github.com/open-mmlab/mmsegmentation.git",
+    "priority": 1,
+    "paths": ["mmseg/models", "mmseg/ops", "mmseg/structures"],
+    "description": "Segmentation models"
+  },
+  "facebookresearch/detectron2": {
+    "url": "https://github.com/facebookresearch/detectron2.git",
+    "priority": 1,
+    "paths": [
+      "detectron2/modeling",
+      "detectron2/layers",
+      "detectron2/structures",
+      "detectron2/utils",
+      "detectron2/config"
+    ],
+    "description": "Facebook detection models"
+  },
+  "ultralytics/yolov5": {
+    "url": "https://github.com/ultralytics/yolov5.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "YOLO family"
+  },
+  "ultralytics/yolov8": {
+    "url": "https://github.com/ultralytics/ultralytics.git",
+    "priority": 1,
+    "paths": ["ultralytics/nn", "ultralytics/models", "ultralytics/utils"],
+    "description": "Latest YOLO"
+  },
+  "WongKinYiu/yolov7": {
+    "url": "https://github.com/WongKinYiu/yolov7.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "YOLO variants"
+  },
+  "WongKinYiu/yolov9": {
+    "url": "https://github.com/WongKinYiu/yolov9.git",
+    "priority": 1,
+    "paths": ["models", "utils"],
+    "description": "Latest YOLO variants"
+  },
+  "facebookresearch/mae": {
+    "url": "https://github.com/facebookresearch/mae.git",
+    "priority": 2,
+    "paths": ["models_mae", "models_vit.py", "util"],
+    "description": "Masked Autoencoder"
+  },
+  "facebookresearch/dino": {
+    "url": "https://github.com/facebookresearch/dino.git",
+    "priority": 2,
+    "paths": ["vision_transformer", "utils"],
+    "description": "Self-supervised learning"
+  },
+  "open-mmlab/mmocr": {
+    "url": "https://github.com/open-mmlab/mmocr.git",
+    "priority": 2,
+    "paths": ["mmocr/models", "mmocr/structures", "projects/ABCNet/abcnet/model"],
+    "description": "OCR models"
+  },
+  "open-mmlab/mmpose": {
+    "url": "https://github.com/open-mmlab/mmpose.git",
+    "priority": 2,
+    "paths": ["mmpose/models", "mmpose/structures"],
+    "description": "Pose estimation"
+  },
+  "open-mmlab/mmpretrain": {
+    "url": "https://github.com/open-mmlab/mmpretrain.git",
+    "priority": 2,
+    "paths": ["mmpretrain/models", "mmpretrain/structures", "projects/MixMIM", "projects/MILAN"],
+    "description": "Pre-training models"
+  }
+  ,
+  "open-mmlab/mmengine": {
+    "url": "https://github.com/open-mmlab/mmengine.git",
+    "priority": 1,
+    "paths": [
+      "mmengine/model",
+      "mmengine/runner",
+      "mmengine/registry",
+      "mmengine/optim",
+      "mmengine/logging",
+      "mmengine/utils"
+    ],
+    "description": "Core base classes, registries, utils for OpenMMLab"
+  },
+  "open-mmlab/mmcv": {
+    "url": "https://github.com/open-mmlab/mmcv.git",
+    "priority": 2,
+    "paths": ["mmcv/ops", "mmcv/cnn", "mmcv/utils", "mmcv/runner", "mmcv/transforms"],
+    "description": "Legacy OpenMMLab utilities and ops (Python wrappers)"
+  },
+  "huggingface/transformers": {
+    "url": "https://github.com/huggingface/transformers.git",
+    "priority": 1,
+    "paths": ["src/transformers/models/bert", "src/transformers/models/opt", "src/transformers/models/clip", "src/transformers/models/vit", "src/transformers/models/swin", "src/transformers/modeling_utils.py", "src/transformers/activations.py", "src/transformers/modeling_outputs.py"],
+    "description": "Transformer architectures (BERT et al.)"
+  },
+  "facebookresearch/Mask2Former": {
+    "url": "https://github.com/facebookresearch/Mask2Former.git",
+    "priority": 1,
+    "paths": ["mask2former/modeling"],
+    "description": "Mask2Former models and transformer blocks"
+  },
+  "facebookresearch/segment-anything": {
+    "url": "https://github.com/facebookresearch/segment-anything.git",
+    "priority": 1,
+    "paths": ["segment_anything"],
+    "description": "Segment Anything (SAM) blocks"
+  },
+  "pyg-team/pytorch_geometric": {
+    "url": "https://github.com/pyg-team/pytorch_geometric.git",
+    "priority": 2,
+    "paths": ["torch_geometric/nn", "torch_geometric/utils"],
+    "description": "Graph neural network layers"
+  }
+}
