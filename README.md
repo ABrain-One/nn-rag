@@ -14,7 +14,7 @@ then optionally fine-tune the LLM for specific tasks.
 
 - **Python** 3.8+ recommended  
 - **Pip** or **Conda** for installing dependencies  
-- (Optional) **GPU** with CUDA if you plan to use `faiss-gpu` or do large-scale training
+- (Optional) **GPU** with CUDA if you plan to do large-scale training
 
 ### Installing Dependencies
 
