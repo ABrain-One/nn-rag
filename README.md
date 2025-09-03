@@ -1,5 +1,5 @@
 # <img src='https://abrain.one/img/lemur-nn-icon-64x64.png' width='32px'/> LLM Retrieval Augmented Generation
-<sub><a href='https://pypi.python.org/pypi/nn-rag'><img src='https://img.shields.io/pypi/v/nn-rag.svg'/></a><br/>
+<sub><a href='https://pypi.python.org/pypi/nn-rag'><img src='https://img.shields.io/pypi/v/nn-rag.svg'/></a> <a href="https://pepy.tech/project/nn-rag"><img alt="GitHub release" src="https://static.pepy.tech/badge/nn-rag"></a><br/><br/>
 short alias  <a href='https://pypi.python.org/pypi/lrag'>lrag</a></sub>
 
 The original version of the NN RAG project was created by <strong>Waleed Khalid</strong> at the Computer Vision Laboratory, University of Würzburg, Germany.
