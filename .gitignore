@@ -143,3 +143,4 @@ checkpoints/
 # ab/rag/config/nn_block_names.json
 
 .venv/
+.pytest_cache/

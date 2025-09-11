@@ -34,18 +34,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-# Import the block validator
 from .block_validator import BlockValidator
 
-# ----------------------------------------------------------------------------- #
-# Internal, deterministic sanitizer (no stub injection)
-# ----------------------------------------------------------------------------- #
-
-
-# Real definition resolver (returns real source slices; never stubs)
 from .utils.definition_resolver import DefinitionResolver, ResolvedSymbol
 
-# Optional LibCST for fast/precise module parsing
 try:
     import libcst as cst
     from libcst.metadata import MetadataWrapper, PositionProvider
@@ -53,9 +45,7 @@ try:
 except Exception:
     LIBCST_AVAILABLE = False
 
-# Project-local helpers
 from .utils.repo_cache import RepoCache
-
 
 # ----------------------------------------------------------------------------- #
 # Logging
@@ -66,25 +56,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("extractor")
-
-
-# ----------------------------------------------------------------------------- #
-# Data models
-# ----------------------------------------------------------------------------- #
-# Import data models from separate module
 from .models import SymbolInfo, ModuleInfo, ImportGraph, ResolvedDependency, DependencyResolutionResult
-
-
-# ----------------------------------------------------------------------------- #
-# Persistent index (SQLite)
-# ----------------------------------------------------------------------------- #
-# Import FileIndexStore from separate module
 from .file_index import FileIndexStore
 
-
-# ----------------------------------------------------------------------------- #
-# Extractor
-# ----------------------------------------------------------------------------- #
 class BlockExtractor:
     def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing"):
         """
