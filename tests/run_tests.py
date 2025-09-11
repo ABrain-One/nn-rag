@@ -19,13 +19,13 @@ def run_command(cmd, description):
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ SUCCESS")
+        print("SUCCESS")
         if result.stdout:
             print("STDOUT:")
             print(result.stdout)
         return True
     except subprocess.CalledProcessError as e:
-        print("❌ FAILED")
+        print("FAILED")
         print(f"Return code: {e.returncode}")
         if e.stdout:
             print("STDOUT:")
@@ -148,10 +148,10 @@ def main():
     success = test_functions[args.test_type]()
     
     if success:
-        print(f"\n🎉 {args.test_type.title()} tests completed successfully!")
+        print(f"\n{args.test_type.title()} tests completed successfully!")
         sys.exit(0)
     else:
-        print(f"\n💥 {args.test_type.title()} tests failed!")
+        print(f"\n{args.test_type.title()} tests failed!")
         sys.exit(1)
 
 

@@ -267,7 +267,6 @@ def main():
     print(f"OK:   {ok_count}")
     print(f"FAIL: {fail_count}")
     if err_by_type:
-        print("\nErrors by type:")
         for k, v in sorted(err_by_type.items(), key=lambda kv: (-kv[1], kv[0])):
             print(f"  {k:<16} {v}")
     if missing_by_mod:

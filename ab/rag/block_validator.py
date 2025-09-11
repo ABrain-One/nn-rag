@@ -247,7 +247,6 @@ def main():
     print(f"Total blocks: {summary['total']}")
     print(f"Valid blocks: {summary['valid']}")
     print(f"Invalid blocks: {summary['invalid']}")
-    print(f"Success rate: {summary['success_rate']:.1f}%")
     
     # Cleanup if requested
     if args.cleanup:

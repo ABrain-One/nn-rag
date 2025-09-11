@@ -2821,12 +2821,9 @@ class BlockExtractor:
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(discovered_blocks, f, indent=2, sort_keys=True)
             
-            print(f"Discovered {len(discovered_blocks)} blocks and saved to {json_path}")
             return discovered_blocks
             
         except Exception as e:
-            print(f"Error during block discovery: {e}")
-            print("Falling back to empty block list.")
             return []
 
     def _clean_and_validate_source_code(self, source_code: str, qname: str) -> Optional[str]:
@@ -3279,7 +3276,6 @@ class BlockExtractor:
                 # Progress reporting
                 if completed % max(1, 10) == 0 or completed == len(plan):
                     ok_n = sum(1 for r in batch_results.values() if r.get("success"))
-                    print(f"[{completed}/{len(plan)}] ok={ok_n} fail={completed - ok_n} elapsed={time.time()-t0:.1f}s")
 
         ok_n = sum(1 for r in batch_results.values() if r.get("success"))
         fail_n = len(batch_results) - ok_n
@@ -3341,35 +3337,26 @@ class BlockExtractor:
         Returns:
             Dictionary containing batch extraction results
         """
-        print("🚀 Auto-extracting all blocks...")
-        
         try:
             # Step 1: Check if JSON file exists, generate if not
             json_file = Path(json_path)
             if not json_file.exists():
-                print("📋 JSON file not found, generating block names...")
                 success = self._generate_block_names(json_file)
                 if not success:
                     return {"success": False, "reason": "Failed to generate block names"}
-                print("✅ Block names generated successfully!")
-            else:
-                print(f"📋 Using existing JSON file: {json_file}")
             
             # Step 2: Warm the index
-            print("📊 Warming index...")
             ok = self.warm_index_once()
             if not ok:
                 return {"success": False, "reason": "Failed to warm index"}
             
             # Step 3: Run batch extraction
-            print("⚡ Running batch extraction...")
             result = self.extract_blocks_from_file(
                 json_path=json_file,
                 limit=limit,
                 skip_existing=False
             )
             
-            print(f"✅ Auto-extraction complete! Processed {result.get('processed', 0)} blocks")
             return result
             
         except Exception as e:
@@ -3389,7 +3376,6 @@ class BlockExtractor:
             # Import the make_blocks_name functionality
             from ab.rag.make_blocks_name import discover_nn_block_names
             
-            print("🔍 Discovering neural network blocks...")
             block_names = discover_nn_block_names()
             
             # Ensure output directory exists
@@ -3400,11 +3386,9 @@ class BlockExtractor:
             with open(output_path, 'w') as f:
                 json.dump(block_names, f, indent=2)
             
-            print(f"💾 Saved {len(block_names)} block names to {output_path}")
             return True
             
         except Exception as e:
-            print(f"❌ Failed to generate block names: {e}")
             return False
 
     def validate_block(self, block_name: str, cleanup_invalid: bool = False) -> Dict[str, Any]:
@@ -3473,7 +3457,6 @@ def main():
     # Warm caches + build index ONCE (policy-controlled)
     ok = extractor.warm_index_once()
     if not ok:
-        print(json.dumps({"success": False, "reason": "cache failure during warm_index"}, indent=2))
         return
 
     # Single block extraction

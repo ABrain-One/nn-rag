@@ -37,7 +37,6 @@ class PackageGenerator:
         Returns:
             Dictionary with package generation results
         """
-        print(f"Generating single Python file for {block_name}")
         
         # Create output directory
         output_dir = Path(self.base_output_dir)
@@ -48,7 +47,6 @@ class PackageGenerator:
             output_dir, block_name, source_info, dependencies
         )
         
-        print(f"+ Single Python file generated: {package_info['file_path']}")
         
         return {
             'block_name': block_name,
@@ -92,7 +90,6 @@ class PackageGenerator:
             }
             
         except Exception as e:
-            print(f"Error generating package: {e}")
             return {
                 'file_path': '',
                 'files_generated': 0,
