@@ -36,7 +36,8 @@ external/
 repo_cache/
 
 # Generated packages and output
-# Note: generated_packages/ is kept for development/testing
+generated_packages/
+block/
 output/
 extraction_results.json
 compile_report.json
@@ -141,5 +142,4 @@ checkpoints/
 # ab/rag/config/block_names.json
 # ab/rag/config/nn_block_names.json
 
-# Note: block/ directory contains validated extracted blocks and should be in version control
 .venv/
