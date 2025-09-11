@@ -71,167 +71,15 @@ log = logging.getLogger("extractor")
 # ----------------------------------------------------------------------------- #
 # Data models
 # ----------------------------------------------------------------------------- #
-@dataclass
-class SymbolInfo:
-    name: str
-    qualified_name: str         # e.g. "timm.layers.attention.Attention" or "timm.layers.config._USE_REENTRANT_CKPT"
-    kind: str                   # 'class' | 'function' | 'const'
-    location: str               # repo-relative file path (with .py)
-    line_number: int
-    source_code: str
-
-
-@dataclass
-class ModuleInfo:
-    repo: str
-    qual: str                   # dotted module path e.g. "timm.layers.attention"
-    path: str                   # repo-relative path without suffix e.g. "timm/layers/attention"
-    file: str                   # filename (module leaf)
-    source_code: str = ""       # full module text (subset retained in SQLite too)
-    all_exports: List[str] = field(default_factory=list)
-    imports: List[str] = field(default_factory=list)
-    symbols: Dict[str, SymbolInfo] = field(default_factory=dict)   # name -> SymbolInfo
-
-
-@dataclass
-class ImportGraph:
-    modules: Dict[str, ModuleInfo] = field(default_factory=dict)         # key: "repo:qual"
-    symbol_table: Dict[str, SymbolInfo] = field(default_factory=dict)    # qual.name -> SymbolInfo
-    dependents: Dict[str, List[str]] = field(default_factory=dict)       # imported_module -> [module_keys]
-
-
-@dataclass
-class ResolvedDependency:
-    name: str
-    qualified_name: str
-    source_code: str
-    resolution_method: str
-    confidence: float
-    location: Optional[str] = None
-
-
-@dataclass
-class DependencyResolutionResult:
-    target_symbol: str
-    resolved_dependencies: Dict[str, ResolvedDependency]
-    unresolved_dependencies: List[str]
-    import_graph: ImportGraph
-    resolution_stats: Dict[str, Any]
-    topological_order: Optional[List[str]] = None
+# Import data models from separate module
+from .models import SymbolInfo, ModuleInfo, ImportGraph, ResolvedDependency, DependencyResolutionResult
 
 
 # ----------------------------------------------------------------------------- #
 # Persistent index (SQLite)
 # ----------------------------------------------------------------------------- #
-class FileIndexStore:
-    def __init__(self, db_path: Path = Path(".cache/index.sqlite3")):
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._init_db()
-
-    def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as con:
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS files (
-                    repo TEXT NOT NULL,
-                    relpath TEXT NOT NULL,
-                    mod_qual TEXT NOT NULL,
-                    sha1 TEXT NOT NULL,
-                    imports_json TEXT NOT NULL,
-                    source TEXT,
-                    PRIMARY KEY (repo, relpath, sha1)
-                )
-            """)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS symbols (
-                    repo TEXT NOT NULL,
-                    relpath TEXT NOT NULL,
-                    sha1 TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    qual TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    line INTEGER NOT NULL,
-                    code TEXT NOT NULL,
-                    PRIMARY KEY (repo, relpath, sha1, qual)
-                )
-            """)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS repo_index_state (
-                    repo TEXT PRIMARY KEY,
-                    indexed_at TEXT NOT NULL,
-                    file_count INTEGER NOT NULL
-                )
-            """)
-            con.commit()
-
-    @staticmethod
-    def _sha1(data: str) -> str:
-        return hashlib.sha1(data.encode("utf-8", errors="ignore")).hexdigest()
-
-    def get(self, repo: str, relpath: str, content: str) -> Optional[Tuple[str, List[str], List[SymbolInfo], str]]:
-        sha1 = self._sha1(content)
-        with self._lock, sqlite3.connect(self.db_path) as con:
-            cur = con.execute(
-                "SELECT mod_qual, imports_json, source FROM files WHERE repo=? AND relpath=? AND sha1=?",
-                (repo, relpath, sha1)
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            mod_qual, imports_json, source = row
-            imports = json.loads(imports_json)
-            sym_rows = con.execute(
-                "SELECT name, qual, kind, line, code FROM symbols WHERE repo=? AND relpath=? AND sha1=?",
-                (repo, relpath, sha1)
-            ).fetchall()
-            syms = [
-                SymbolInfo(name=r[0], qualified_name=r[1], kind=r[2], line_number=r[3],
-                           source_code=r[4], location=relpath)
-                for r in sym_rows
-            ]
-            return mod_qual, imports, syms, source or ""
-
-    def put(self, repo: str, relpath: str, mod_qual: str, imports: List[str],
-            symbols: Iterable[SymbolInfo], source: str) -> None:
-        sha1 = self._sha1(source)
-        imports_json = json.dumps(sorted(set(imports)))
-        with self._lock, sqlite3.connect(self.db_path) as con:
-            con.execute(
-                "INSERT OR REPLACE INTO files(repo, relpath, mod_qual, sha1, imports_json, source) VALUES(?,?,?,?,?,?)",
-                (repo, relpath, mod_qual, sha1, imports_json, source)
-            )
-            con.execute("DELETE FROM symbols WHERE repo=? AND relpath=? AND sha1=?", (repo, relpath, sha1))
-            con.executemany(
-                "INSERT INTO symbols(repo, relpath, sha1, name, qual, kind, line, code) VALUES(?,?,?,?,?,?,?,?)",
-                [(repo, relpath, sha1, s.name, s.qualified_name, s.kind, s.line_number, s.source_code) for s in symbols]
-            )
-            con.commit()
-
-    # ------------- indexing state helpers (to avoid re-indexing) -------------- #
-    def repo_has_index(self, repo: str) -> bool:
-        with sqlite3.connect(self.db_path) as con:
-            row = con.execute(
-                "SELECT file_count FROM repo_index_state WHERE repo=?",
-                (repo,)
-            ).fetchone()
-            if row and int(row[0]) > 0:
-                return True
-            # Fallback check (older DBs): look for any file rows for this repo
-            row2 = con.execute(
-                "SELECT 1 FROM files WHERE repo=? LIMIT 1",
-                (repo,)
-            ).fetchone()
-            return bool(row2)
-
-    def mark_repo_indexed(self, repo: str) -> None:
-        with sqlite3.connect(self.db_path) as con:
-            cnt = con.execute("SELECT COUNT(1) FROM files WHERE repo=?", (repo,)).fetchone()[0]
-            con.execute(
-                "INSERT OR REPLACE INTO repo_index_state(repo, indexed_at, file_count) VALUES(?,?,?)",
-                (repo, datetime.utcnow().isoformat(), int(cnt))
-            )
-            con.commit()
+# Import FileIndexStore from separate module
+from .file_index import FileIndexStore
 
 
 # ----------------------------------------------------------------------------- #
@@ -3392,73 +3240,8 @@ class BlockExtractor:
 # ----------------------------------------------------------------------------- #
 
 
-def main():
-    """Main CLI function that uses the BlockExtractor API."""
-    p = argparse.ArgumentParser(description="Extract reusable PyTorch blocks")
-    p.add_argument("--block", type=str, help="Extract a specific block by name")
-    p.add_argument("--blocks", nargs="+", help="Extract multiple blocks")
-    p.add_argument("--retry-failed", action="store_true", help="Retry failed blocks from previous run")
-    p.add_argument("--names-json", type=Path, default=Path(__file__).parent / "config" / "nn_block_names.json",
-                   help="If --block/--blocks not provided, read names from this JSON (default: ab/rag/config/nn_block_names.json)")
-    p.add_argument("--limit", type=int, default=None, help="Max number of names to process from the list")
-    p.add_argument("--start-from", type=str, default=None,
-                   help="Skip names until (and including) this one, then start")
-    p.add_argument("--stop-on-fail", action="store_true", help="Stop batch as soon as one extraction fails")
-    p.add_argument("--progress-every", type=int, default=10, help="Log progress every N blocks")
-    p.add_argument("--index-mode", type=str, choices=("missing", "force", "skip"),
-                   default="missing", help="Indexing policy: missing (default), force, or skip")
-    p.add_argument("--no-validate", action="store_true", help="Disable automatic validation and movement of valid blocks to 'block' directory")
-    p.add_argument("--cleanup-invalid", action="store_true", help="Remove invalid blocks after validation")
-    args = p.parse_args()
-
-    # Initialize extractor
-    extractor = BlockExtractor(index_mode=args.index_mode)
-
-    # Warm caches + build index ONCE (policy-controlled)
-    ok = extractor.warm_index_once()
-    if not ok:
-        return
-
-    # Single block extraction
-    if args.block:
-        res = extractor.extract_single_block(
-            args.block, 
-            validate=not args.no_validate, 
-            cleanup_invalid=args.cleanup_invalid
-        )
-        print(json.dumps(res, indent=2))
-        return
-
-    # Multiple blocks extraction
-    if args.blocks:
-        results = extractor.extract_multiple_blocks(
-            args.blocks,
-            validate=not args.no_validate,
-            cleanup_invalid=args.cleanup_invalid
-        )
-        print(json.dumps(results, indent=2))
-        return
-
-    # Retry failed blocks
-    if args.retry_failed:
-        retried = extractor.retry_failed_blocks(
-            validate=not args.no_validate,
-            cleanup_invalid=args.cleanup_invalid
-        )
-        print(json.dumps(retried, indent=2))
-        return
-
-    # Default mode: extract from JSON file
-    result = extractor.extract_blocks_from_file(
-        json_path=args.names_json,
-        limit=args.limit,
-        start_from=args.start_from
-    )
-    
-    # Validation is now done incrementally during extraction
-    
-    print(json.dumps(result, indent=2))
-
+# Import CLI functionality from separate module
+from .cli import main
 
 if __name__ == "__main__":
     main()
