@@ -54,7 +54,6 @@ except Exception:
     LIBCST_AVAILABLE = False
 
 # Project-local helpers
-from .utils.package_generator import PackageGenerator
 from .utils.repo_cache import RepoCache
 
 
@@ -247,7 +246,6 @@ class BlockExtractor:
           - "skip": never index (assume index is prebuilt)
         """
         self.repo_cache = RepoCache()
-        self.package_generator = PackageGenerator()
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
 
