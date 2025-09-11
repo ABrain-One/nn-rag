@@ -144,3 +144,7 @@ checkpoints/
 
 .venv/
 .pytest_cache/
+build/
+dist/
+*.egg-info/
+ab/rag/utils/symbol_index.db
