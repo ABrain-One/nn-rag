@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class BlockValidator:
     """Validates generated Python blocks and moves valid ones to a 'block' directory."""
     
-    def __init__(self, generated_dir: str = "generated_packages", block_dir: str = "block"):
+    def __init__(self, generated_dir: str = "ab/rag/generated_packages", block_dir: str = "block"):
         """
         Initialize the BlockValidator.
         
@@ -227,7 +227,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Validate generated Python blocks")
-    parser.add_argument("--generated-dir", default="generated_packages", 
+    parser.add_argument("--generated-dir", default="ab/rag/generated_packages", 
                        help="Directory containing generated packages")
     parser.add_argument("--block-dir", default="block", 
                        help="Directory where valid blocks will be moved")

@@ -2234,7 +2234,7 @@ class BlockExtractor:
         return required_imports
 
     def _emit_single_file(self, block_name: str, source_info: Dict[str, Any], deps: DependencyResolutionResult) -> Dict[str, Any]:
-        out_dir = Path("generated_packages")
+        out_dir = Path("ab/rag/generated_packages")
         out_dir.mkdir(parents=True, exist_ok=True)
         outfile = out_dir / f"{block_name}.py"
 
@@ -3379,7 +3379,7 @@ class BlockExtractor:
             
             # Cleanup invalid blocks if requested
             if cleanup_invalid and not is_valid:
-                invalid_file = Path("generated_packages") / f"{block_name}.py"
+                invalid_file = Path("ab/rag/generated_packages") / f"{block_name}.py"
                 if invalid_file.exists():
                     invalid_file.unlink()
                     validation_result["cleaned_up"] = True
