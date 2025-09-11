@@ -34,7 +34,6 @@ class TestErrorScenarios:
         """Create a BlockExtractor instance for testing."""
         with patch('ab.rag.extract_blocks.BlockExtractor.warm_index_once', return_value=True):
             extractor = BlockExtractor()
-            extractor.results_file = os.path.join(temp_dir, "test_results.json")
             return extractor
     
     def test_missing_json_file_generation_failure(self, extractor, temp_dir):
@@ -150,17 +149,6 @@ class TestErrorScenarios:
             assert result["success"] is True
             assert result["block_name"] == long_name
     
-    def test_concurrent_access_to_results_file(self, extractor, temp_dir):
-        """Test handling of concurrent access to results file."""
-        results_file = os.path.join(temp_dir, "results.json")
-        
-        # Simulate concurrent access by mocking file operations
-        with patch('builtins.open', side_effect=OSError("File is locked")):
-            result = extractor.extract_single_block("AConv")
-            
-            # Should handle file locking gracefully - extraction might still succeed
-            # if the file locking doesn't affect the core extraction logic
-            assert result["success"] is True or result["success"] is False
     
     def test_malformed_validation_result(self, extractor):
         """Test handling of malformed validation results."""

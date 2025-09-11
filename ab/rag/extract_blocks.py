@@ -255,13 +255,11 @@ class BlockExtractor:
         self.parsed_files: Set[str] = set()
         self.failed_files: Set[str] = set()
 
-        self.results_file = "extraction_results.json"
         self.extracted_blocks: List[Dict[str, Any]] = []
         self.failed_blocks: List[str] = []
         self.skipped_blocks: List[str] = []
 
         self.index = FileIndexStore()
-        self._load_results()
 
         # package root → {repo: count}; and best repo per package root (systematic, from index)
         self._pkg_repo_counts: Dict[str, Dict[str, int]] = {}
@@ -288,28 +286,6 @@ class BlockExtractor:
 
     # -------------------------- Utilities & persistence ------------------------ #
 
-    def _load_results(self) -> None:
-        fp = Path(self.results_file)
-        if fp.exists():
-            try:
-                data = json.loads(fp.read_text())
-                self.extracted_blocks = data.get("extracted_blocks", [])
-                self.failed_blocks = data.get("failed_blocks", [])
-                self.skipped_blocks = data.get("skipped_blocks", [])
-                log.info("Loaded results: %d extracted, %d failed, %d skipped",
-                         len(self.extracted_blocks), len(self.failed_blocks), len(self.skipped_blocks))
-            except Exception as e:
-                log.warning("Could not read results file: %s", e)
-
-    def _save_results(self) -> None:
-        data = {
-            "timestamp": datetime.now().isoformat(),
-            "extracted_blocks": self.extracted_blocks,
-            "failed_blocks": self.failed_blocks,
-            "skipped_blocks": self.skipped_blocks,
-        }
-        Path(self.results_file).write_text(json.dumps(data, indent=2))
-        log.info("Saved results file.")
 
     # ------------------------------ Repo indexing ----------------------------- #
 
@@ -3084,7 +3060,6 @@ class BlockExtractor:
         candidates = discoveries.get(block_name) or []
         if not candidates:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {"success": False, "reason": "block not found", "block_name": block_name}
 
         best = candidates[0]
@@ -3097,7 +3072,6 @@ class BlockExtractor:
         target_code = self._extract_named_block(content, block_name)
         if not target_code:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {"success": False, "reason": "could not slice block", "block_name": block_name}
 
         source_info = {"repository": repo, "file_path": rel, "content": target_code, "identifier": block_name}
@@ -3107,7 +3081,6 @@ class BlockExtractor:
 
         if deps.unresolved_dependencies:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {
                 "success": False,
                 "reason": "unresolved dependencies",
@@ -3132,7 +3105,6 @@ class BlockExtractor:
             self.extracted_blocks.append(result)
         else:
             self.failed_blocks.append(block_name)
-        self._save_results()
         return result
 
     # ------------------------------ Helpers ----------------------------------- #
@@ -3206,7 +3178,7 @@ class BlockExtractor:
         return results
 
     def extract_blocks_from_file(self, json_path: Path, limit: Optional[int] = None, 
-                                start_from: Optional[str] = None, skip_existing: bool = False) -> Dict[str, Any]:
+                                start_from: Optional[str] = None) -> Dict[str, Any]:
         """
         Extract blocks from a JSON file containing block names.
         
@@ -3214,7 +3186,6 @@ class BlockExtractor:
             json_path: Path to JSON file containing block names
             limit: Maximum number of blocks to process
             start_from: Skip blocks until this name (inclusive), then start
-            skip_existing: Skip blocks that have already been extracted
             
         Returns:
             Dictionary containing batch extraction results
@@ -3225,8 +3196,6 @@ class BlockExtractor:
             return {"success": False, "reason": f"names file error: {e}", "path": str(json_path)}
 
         # Filter names based on parameters
-        already = {x.get("block_name") for x in self.extracted_blocks} if self.extracted_blocks else set()
-        
         if start_from:
             if start_from in names:
                 pos = names.index(start_from)
@@ -3237,8 +3206,6 @@ class BlockExtractor:
         for n in names:
             if limit and len(plan) >= limit:
                 break
-            if skip_existing and n in already:
-                continue
             plan.append(n)
 
         if not plan:
@@ -3270,8 +3237,6 @@ class BlockExtractor:
                 
                 completed += 1
                 
-                # Save progress incrementally
-                self._save_results()
                 
                 # Progress reporting
                 if completed % max(1, 10) == 0 or completed == len(plan):
@@ -3353,8 +3318,7 @@ class BlockExtractor:
             # Step 3: Run batch extraction
             result = self.extract_blocks_from_file(
                 json_path=json_file,
-                limit=limit,
-                skip_existing=False
+                limit=limit
             )
             
             return result
@@ -3441,8 +3405,6 @@ def main():
     p.add_argument("--limit", type=int, default=None, help="Max number of names to process from the list")
     p.add_argument("--start-from", type=str, default=None,
                    help="Skip names until (and including) this one, then start")
-    p.add_argument("--skip-existing", action="store_true",
-                   help="Skip blocks that already appear in extraction_results.json (default: process all blocks)")
     p.add_argument("--stop-on-fail", action="store_true", help="Stop batch as soon as one extraction fails")
     p.add_argument("--progress-every", type=int, default=10, help="Log progress every N blocks")
     p.add_argument("--index-mode", type=str, choices=("missing", "force", "skip"),
@@ -3492,8 +3454,7 @@ def main():
     result = extractor.extract_blocks_from_file(
         json_path=args.names_json,
         limit=args.limit,
-        start_from=args.start_from,
-        skip_existing=args.skip_existing
+        start_from=args.start_from
     )
     
     # Validation is now done incrementally during extraction

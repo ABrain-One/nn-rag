@@ -34,7 +34,6 @@ class TestBlockExtractor:
         with patch('ab.rag.extract_blocks.BlockExtractor.warm_index_once', return_value=True):
             extractor = BlockExtractor()
             # Mock the results file to use temp directory
-            extractor.results_file = os.path.join(temp_dir, "test_results.json")
             return extractor
     
     @pytest.fixture
