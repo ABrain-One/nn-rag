@@ -36,7 +36,7 @@ external/
 repo_cache/
 
 # Generated packages and output
-generated_packages/
+# Note: generated_packages/ is kept for development/testing
 output/
 extraction_results.json
 compile_report.json
@@ -72,6 +72,12 @@ logs/
 *.temp
 temp/
 tmp/
+
+# Build artifacts and pip output
+=*
+*.egg-info/
+build/
+dist/
 
 # OS generated files
 .DS_Store
@@ -135,9 +141,5 @@ checkpoints/
 # ab/rag/config/block_names.json
 # ab/rag/config/nn_block_names.json
 
-block/
-=0.23.6
+# Note: block/ directory contains validated extracted blocks and should be in version control
 .venv/
-=1.7.0
-tests/__pycache__/
-tests/rag/__pycache__/
