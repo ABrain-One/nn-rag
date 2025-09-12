@@ -72,7 +72,9 @@ class BlockExtractor:
           - "force": re-index all repos every run
           - "skip": never index (assume index is prebuilt)
         """
-        self.repo_cache = RepoCache()
+        # Initialize repo cache with package-local cache directory
+        package_cache_dir = Path(__file__).parent / ".cache"
+        self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
 
@@ -84,8 +86,13 @@ class BlockExtractor:
         self.failed_blocks: List[str] = []
         self.skipped_blocks: List[str] = []
 
-        self.index = FileIndexStore()
+        # Initialize index with package-local database
+        package_index_db = Path(__file__).parent / ".cache" / "index.db"
+        self.index = FileIndexStore(db_path=package_index_db)
         self.validator = BlockValidator()
+        
+        # Check if package data is available (after index is initialized)
+        self._package_data_available = self._check_package_data()
 
         # package root → {repo: count}; and best repo per package root (systematic, from index)
         self._pkg_repo_counts: Dict[str, Dict[str, int]] = {}
@@ -112,6 +119,23 @@ class BlockExtractor:
 
         # log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
         #          self.max_workers, LIBCST_AVAILABLE, self.index_mode)
+
+    def _check_package_data(self) -> bool:
+        """Check if pre-built package data is available."""
+        try:
+            cache_dir = Path(__file__).parent / ".cache"
+            index_db = cache_dir / "index.db"
+            
+            if not cache_dir.exists() or not index_db.exists():
+                return False
+                
+            # Check if index has data by testing known repos
+            test_repos = ["pytorch/pytorch", "huggingface/transformers", "pytorch/vision"]
+            indexed_count = sum(1 for repo in test_repos if self.index.repo_has_index(repo))
+            return indexed_count > 0
+            
+        except Exception:
+            return False
 
     def _build_common_imports_mapping(self) -> Dict[str, str]:
         """
@@ -2982,6 +3006,14 @@ class BlockExtractor:
         """
         if self._index_warmed:
             return True
+            
+        # If package data is available, use it
+        if self._package_data_available:
+            print("Using pre-built package data...")
+            self._index_warmed = True
+            return True
+            
+        print("Pre-built package data not available, cloning repositories...")
         if not self._ensure_all_repos_cached():
             return False
 
