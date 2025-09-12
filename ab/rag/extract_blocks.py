@@ -73,7 +73,23 @@ class BlockExtractor:
           - "skip": never index (assume index is prebuilt)
         """
         # Initialize repo cache with package-local cache directory
-        package_cache_dir = Path(__file__).parent / ".cache"
+        # Use the package directory, not the source directory
+        import site
+        import os
+        
+        # Find the installed package directory
+        package_dir = None
+        for path in site.getsitepackages() + [site.getusersitepackages()]:
+            ab_rag_path = os.path.join(path, 'ab', 'rag')
+            if os.path.exists(ab_rag_path):
+                package_dir = Path(ab_rag_path)
+                break
+        
+        # Fallback to current file directory if not found (development mode)
+        if package_dir is None:
+            package_dir = Path(__file__).parent
+            
+        package_cache_dir = package_dir / ".cache"
         self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
@@ -87,7 +103,7 @@ class BlockExtractor:
         self.skipped_blocks: List[str] = []
 
         # Initialize index with package-local database
-        package_index_db = Path(__file__).parent / ".cache" / "index.db"
+        package_index_db = package_dir / ".cache" / "index.db"
         self.index = FileIndexStore(db_path=package_index_db)
         self.validator = BlockValidator()
         
@@ -123,7 +139,21 @@ class BlockExtractor:
     def _check_package_data(self) -> bool:
         """Check if pre-built package data is available."""
         try:
-            cache_dir = Path(__file__).parent / ".cache"
+            # Use the same package directory detection logic
+            import site
+            import os
+            
+            package_dir = None
+            for path in site.getsitepackages() + [site.getusersitepackages()]:
+                ab_rag_path = os.path.join(path, 'ab', 'rag')
+                if os.path.exists(ab_rag_path):
+                    package_dir = Path(ab_rag_path)
+                    break
+            
+            if package_dir is None:
+                package_dir = Path(__file__).parent
+                
+            cache_dir = package_dir / ".cache"
             index_db = cache_dir / "index.db"
             
             if not cache_dir.exists() or not index_db.exists():

@@ -60,8 +60,6 @@ Documentation = "https://github.com/ABrain-One/nn-rag#readme"
 [project.scripts]
 nn-rag = "ab.rag.cli:main"
 
-[tool.setuptools]
-packages = ["ab.rag", "ab.rag.config", "ab.rag.utils"]
 
 [tool.setuptools.dynamic]
 version = {file = "version"}
