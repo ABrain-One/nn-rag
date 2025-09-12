@@ -80,6 +80,7 @@ class BlockExtractor:
         self.skipped_blocks: List[str] = []
 
         self.index = FileIndexStore()
+        self.validator = BlockValidator()
 
         # package root → {repo: count}; and best repo per package root (systematic, from index)
         self._pkg_repo_counts: Dict[str, Dict[str, int]] = {}
@@ -2295,6 +2296,13 @@ class BlockExtractor:
         final_lines.append(f"# Auto-generated single-file for {block_name}")
         final_lines.append("# Dependencies are emitted in topological order (utilities first).")
         
+        # Add warning about unresolved dependencies if any exist
+        if deps.unresolved_dependencies:
+            final_lines.append("# UNRESOLVED DEPENDENCIES:")
+            final_lines.append(f"# {', '.join(deps.unresolved_dependencies)}")
+            final_lines.append("# This block may not compile due to missing dependencies.")
+            final_lines.append("")
+        
         # Add imports at the very top
         if required_imports:
             final_lines.append("# Standard library and external imports")
@@ -2899,16 +2907,24 @@ class BlockExtractor:
         # Resolve all dependencies using the warmed import graph
         deps = self.resolve_block_dependencies(block_name, rel)
 
+        # Generate the block file even if there are unresolved dependencies
+        # This allows the validator to properly catch and report dependency issues
+        gen = self._emit_single_file(block_name, source_info, deps)
+        
+        # Validate the generated block and move if valid
+        validation_result = self._validate_and_move_block(block_name)
+        
+        # If there are unresolved dependencies, mark as failed but still generate the file
         if deps.unresolved_dependencies:
             self.failed_blocks.append(block_name)
             return {
                 "success": False,
                 "reason": "unresolved dependencies",
                 "block_name": block_name,
-                "unresolved": deps.unresolved_dependencies
+                "unresolved": deps.unresolved_dependencies,
+                "file_generated": gen.get("success", False),
+                "validation": validation_result
             }
-
-        gen = self._emit_single_file(block_name, source_info, deps)
 
         result = {
             "success": gen["success"],
@@ -2919,6 +2935,7 @@ class BlockExtractor:
                 "resolved": deps.resolution_stats.get("resolved", 0),
                 "unresolved": deps.resolution_stats.get("unresolved", 0)
             },
+            "validation": validation_result,
             "timestamp": datetime.now().isoformat()
         }
         if gen["success"]:
@@ -2926,6 +2943,41 @@ class BlockExtractor:
         else:
             self.failed_blocks.append(block_name)
         return result
+
+    def _validate_and_move_block(self, block_name: str) -> Dict[str, Any]:
+        """
+        Validate a generated block and move it to the block directory if valid.
+        
+        Args:
+            block_name: Name of the block to validate
+            
+        Returns:
+            Dictionary containing validation results
+        """
+        try:
+            # Validate the block
+            is_valid, error = self.validator.validate_single_block(block_name)
+            
+            if is_valid:
+                # Move to block directory
+                move_success = self.validator.move_valid_block(block_name)
+                return {
+                    "valid": True,
+                    "moved": move_success,
+                    "error": None
+                }
+            else:
+                return {
+                    "valid": False,
+                    "moved": False,
+                    "error": error
+                }
+        except Exception as e:
+            return {
+                "valid": False,
+                "moved": False,
+                "error": f"Validation error: {e}"
+            }
 
     # ------------------------------ Helpers ----------------------------------- #
 

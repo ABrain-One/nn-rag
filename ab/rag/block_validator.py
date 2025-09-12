@@ -42,7 +42,7 @@ class BlockValidator:
     
     def validate_single_block(self, block_name: str) -> Tuple[bool, Optional[str]]:
         """
-        Validate a single block by checking if it compiles.
+        Validate a single block by actually executing it to see if it works.
         
         Args:
             block_name: Name of the block to validate (without .py extension)
@@ -70,21 +70,51 @@ class BlockValidator:
             except SyntaxError as e:
                 return False, f"Syntax error: {e}"
             
-            # Try to compile the code
+            # Try to compile the code first (syntax check)
             try:
                 compile(content, str(block_file), 'exec')
             except Exception as e:
                 return False, f"Compilation error: {e}"
             
-            # Additional validation: check for basic Python structure
-            if not self._has_valid_structure(content):
-                return False, "Block lacks valid Python structure (no classes/functions)"
-            
-            return True, None
+            # Actually execute the code to see if it works
+            try:
+                # Create a safe execution environment
+                exec_namespace = {
+                    '__builtins__': __builtins__,
+                }
+                
+                # Set up environment variables that might be needed
+                import os
+                original_env = os.environ.copy()
+                try:
+                    # Set common environment variables that might be referenced
+                    os.environ.setdefault('TIMM_FUSED_ATTN', '0')
+                    exec(content, exec_namespace)
+                finally:
+                    # Restore original environment
+                    os.environ.clear()
+                    os.environ.update(original_env)
+                
+                # If we get here, the code executed successfully
+                return True, None
+                
+            except NameError as e:
+                # Extract the undefined name from the error message
+                import re
+                name_match = re.search(r"'([^']+)' is not defined", str(e))
+                if name_match:
+                    undefined_name = name_match.group(1)
+                    return False, f"Unresolved dependency: '{undefined_name}' is not defined (missing import)"
+                return False, f"NameError: {e}"
+            except Exception as e:
+                # Any other error means the block is invalid
+                return False, f"Execution error: {e}"
             
         except Exception as e:
             return False, f"Validation error: {e}"
     
+
+
     def _has_valid_structure(self, content: str) -> bool:
         """
         Check if the content has valid Python structure.
