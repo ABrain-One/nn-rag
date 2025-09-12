@@ -37,8 +37,8 @@ class BlockValidator:
         """Ensure both generated and block directories exist."""
         self.generated_dir.mkdir(exist_ok=True)
         self.block_dir.mkdir(exist_ok=True)
-        logger.info(f"Generated directory: {self.generated_dir}")
-        logger.info(f"Block directory: {self.block_dir}")
+        # logger.info(f"Generated directory: {self.generated_dir}")
+        # logger.info(f"Block directory: {self.block_dir}")
     
     def validate_single_block(self, block_name: str) -> Tuple[bool, Optional[str]]:
         """
@@ -165,7 +165,7 @@ class BlockValidator:
         try:
             # Move the file to block directory (not copy)
             shutil.move(str(source_file), str(target_file))
-            logger.info(f"Successfully moved {block_name} to block directory")
+            # logger.info(f"Successfully moved {block_name} to block directory")
             return True
         except Exception as e:
             logger.error(f"Failed to move {block_name}: {e}")
@@ -202,13 +202,13 @@ class BlockValidator:
         
         for py_file in self.generated_dir.glob("*.py"):
             block_name = py_file.stem
-            logger.info(f"Validating block: {block_name}")
+            # logger.info(f"Validating block: {block_name}")
             
             is_valid, error = self.validate_and_move_block(block_name)
             results[block_name] = (is_valid, error)
             
             if is_valid:
-                logger.info(f"✓ {block_name}: Valid and moved to block directory")
+                pass  # Valid and moved to block directory
             else:
                 logger.warning(f"✗ {block_name}: {error}")
         
@@ -252,7 +252,7 @@ class BlockValidator:
                 block_file = self.generated_dir / f"{block_name}.py"
                 try:
                     block_file.unlink()
-                    logger.info(f"Removed invalid block: {block_name}")
+                    # logger.info(f"Removed invalid block: {block_name}")
                     removed_count += 1
                 except Exception as e:
                     logger.error(f"Failed to remove invalid block {block_name}: {e}")

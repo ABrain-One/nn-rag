@@ -29,6 +29,11 @@ import re
 import sqlite3
 import threading
 import time
+import warnings
+
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -105,8 +110,8 @@ class BlockExtractor:
         # Common missing imports mapping for systematic resolution
         self._common_imports = self._build_common_imports_mapping()
 
-        log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
-                 self.max_workers, LIBCST_AVAILABLE, self.index_mode)
+        # log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
+        #          self.max_workers, LIBCST_AVAILABLE, self.index_mode)
 
     def _build_common_imports_mapping(self) -> Dict[str, str]:
         """
@@ -580,12 +585,12 @@ class BlockExtractor:
             log.warning("Repo %s not cached; skipping.", repo)
             return
         py_files = [p for p in root.rglob("*.py") if not self._should_skip(p, repo=repo)]
-        log.info("Found %d Python files in %s after path filtering", len(py_files), repo)
+        # log.info("Found %d Python files in %s after path filtering", len(py_files), repo)
         if not py_files:
             log.warning("No Python files found in %s after path filtering", repo)
             return
 
-        log.info("Indexing %s (%d files)...", repo, len(py_files))
+        # log.info("Indexing %s (%d files)...", repo, len(py_files))
         t0 = time.time()
         with cf.ThreadPoolExecutor(max_workers=self.max_workers) as ex:
             futures = [ex.submit(self._parse_one, repo, root, fp) for fp in py_files]
@@ -603,13 +608,13 @@ class BlockExtractor:
         dt = time.time() - t0
         # Mark repo as indexed in SQLite (for next processes to skip)
         self.index.mark_repo_indexed(repo)
-        log.info(
-            "Indexed %s: %d modules | %d symbols in %.2fs",
-            repo,
-            sum(1 for k in self.import_graph.modules if k.startswith(f"{repo}:")),
-            len(self.import_graph.symbol_table),
-            dt,
-        )
+        # log.info(
+        #     "Indexed %s: %d modules | %d symbols in %.2fs",
+        #     repo,
+        #     sum(1 for k in self.import_graph.modules if k.startswith(f"{repo}:")),
+        #     len(self.import_graph.symbol_table),
+        #     dt,
+        # )
         
         # Build re-exports for this repo
         for key, mod in list(self.import_graph.modules.items()):
@@ -2987,13 +2992,13 @@ class BlockExtractor:
 
             if self.index_mode == "skip":
                 if self.index.repo_has_index(repo):
-                    log.info("Index present for %s — hydrating from SQLite.", repo)
+                    # log.info("Index present for %s — hydrating from SQLite.", repo)
                     self._hydrate_repo_from_index(repo)
                 continue
 
             if self.index_mode == "missing":
                 if self.index.repo_has_index(repo):
-                    log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
+                    # log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
                     self._hydrate_repo_from_index(repo)
                     continue
                 # no index yet → index now
@@ -3012,7 +3017,7 @@ class BlockExtractor:
     # ------------------------------ Top-level API ------------------------------ #
 
     def extract_block(self, block_name: str) -> Dict[str, Any]:
-        log.info("Extracting block: %s", block_name)
+        print(f"Extracting '{block_name}'...", end=" ")
 
         # Warm caches + build index ONCE (policy-controlled)
         if not self.warm_index_once():
@@ -3075,8 +3080,13 @@ class BlockExtractor:
         }
         if gen["success"]:
             self.extracted_blocks.append(result)
+            if 'validation' in result and result['validation'].get('valid'):
+                print("Valid")
+            else:
+                print("Invalid")
         else:
             self.failed_blocks.append(block_name)
+            print("Failed")
         return result
 
     def _validate_and_move_block(self, block_name: str) -> Dict[str, Any]:
