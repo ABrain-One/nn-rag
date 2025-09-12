@@ -97,7 +97,7 @@ class BlockValidator:
                 
                 # If we get here, the code executed successfully
                 return True, None
-                
+
             except NameError as e:
                 # Extract the undefined name from the error message
                 import re
@@ -106,6 +106,14 @@ class BlockValidator:
                     undefined_name = name_match.group(1)
                     return False, f"Unresolved dependency: '{undefined_name}' is not defined (missing import)"
                 return False, f"NameError: {e}"
+            except ModuleNotFoundError as e:
+                # Handle missing external modules more gracefully
+                import re
+                module_match = re.search(r"No module named '([^']+)'", str(e))
+                if module_match:
+                    module_name = module_match.group(1)
+                    return False, f"Missing external module: '{module_name}' is not installed"
+                return False, f"ModuleNotFoundError: {e}"
             except Exception as e:
                 # Any other error means the block is invalid
                 return False, f"Execution error: {e}"
