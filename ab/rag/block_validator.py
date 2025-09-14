@@ -52,7 +52,12 @@ class BlockValidator:
         """
         block_file = self.generated_dir / f"{block_name}.py"
         
+        # Check if file exists in generated directory
         if not block_file.exists():
+            # Check if file already exists in block directory (already validated)
+            block_target = self.block_dir / f"{block_name}.py"
+            if block_target.exists():
+                return True, "Block already validated and moved to block directory"
             return False, f"Block file {block_file} does not exist"
         
         try:
@@ -163,6 +168,14 @@ class BlockValidator:
         target_file = self.block_dir / f"{block_name}.py"
         
         try:
+            # Check if target already exists (already moved)
+            if target_file.exists():
+                return True
+            
+            # Check if source exists
+            if not source_file.exists():
+                return False
+                
             # Move the file to block directory (not copy)
             shutil.move(str(source_file), str(target_file))
             # logger.info(f"Successfully moved {block_name} to block directory")

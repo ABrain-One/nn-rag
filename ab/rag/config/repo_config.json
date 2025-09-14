@@ -154,5 +154,11 @@
     "priority": 2,
     "paths": ["torch_geometric/nn", "torch_geometric/utils"],
     "description": "Graph neural network layers"
+  },
+  "facebookresearch/detr": {
+    "url": "https://github.com/facebookresearch/detr.git",
+    "priority": 1,
+    "paths": ["models", "util"],
+    "description": "DETR: End-to-End Object Detection with Transformers"
   }
 }

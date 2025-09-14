@@ -73,21 +73,8 @@ class BlockExtractor:
           - "skip": never index (assume index is prebuilt)
         """
         # Initialize repo cache with package-local cache directory
-        # Use the package directory, not the source directory
-        import site
-        import os
-        
-        # Find the installed package directory
-        package_dir = None
-        for path in site.getsitepackages() + [site.getusersitepackages()]:
-            ab_rag_path = os.path.join(path, 'ab', 'rag')
-            if os.path.exists(ab_rag_path):
-                package_dir = Path(ab_rag_path)
-                break
-        
-        # Fallback to current file directory if not found (development mode)
-        if package_dir is None:
-            package_dir = Path(__file__).parent
+        # Always use the source directory for cache
+        package_dir = Path(__file__).parent
             
         package_cache_dir = package_dir / ".cache"
         self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
@@ -105,10 +92,14 @@ class BlockExtractor:
         # Initialize index with package-local database
         package_index_db = package_dir / ".cache" / "index.db"
         self.index = FileIndexStore(db_path=package_index_db)
-        self.validator = BlockValidator()
+        # Initialize validator with absolute paths
+        generated_dir = package_dir / "generated_packages"
+        block_dir = package_dir.parent.parent / "blocks"  # block directory is at project root
+        self.validator = BlockValidator(
+            generated_dir=str(generated_dir),
+            block_dir=str(block_dir)
+        )
         
-        # Check if package data is available (after index is initialized)
-        self._package_data_available = self._check_package_data()
 
         # package root → {repo: count}; and best repo per package root (systematic, from index)
         self._pkg_repo_counts: Dict[str, Dict[str, int]] = {}
@@ -135,37 +126,6 @@ class BlockExtractor:
 
         # log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
         #          self.max_workers, LIBCST_AVAILABLE, self.index_mode)
-
-    def _check_package_data(self) -> bool:
-        """Check if pre-built package data is available."""
-        try:
-            # Use the same package directory detection logic
-            import site
-            import os
-            
-            package_dir = None
-            for path in site.getsitepackages() + [site.getusersitepackages()]:
-                ab_rag_path = os.path.join(path, 'ab', 'rag')
-                if os.path.exists(ab_rag_path):
-                    package_dir = Path(ab_rag_path)
-                    break
-            
-            if package_dir is None:
-                package_dir = Path(__file__).parent
-                
-            cache_dir = package_dir / ".cache"
-            index_db = cache_dir / "index.db"
-            
-            if not cache_dir.exists() or not index_db.exists():
-                return False
-                
-            # Check if index has data by testing known repos
-            test_repos = ["pytorch/pytorch", "huggingface/transformers", "pytorch/vision"]
-            indexed_count = sum(1 for repo in test_repos if self.index.repo_has_index(repo))
-            return indexed_count > 0
-            
-        except Exception:
-            return False
 
     def _build_common_imports_mapping(self) -> Dict[str, str]:
         """
@@ -2234,7 +2194,9 @@ class BlockExtractor:
         return required_imports
 
     def _emit_single_file(self, block_name: str, source_info: Dict[str, Any], deps: DependencyResolutionResult) -> Dict[str, Any]:
-        out_dir = Path("ab/rag/generated_packages")
+        # Use absolute path relative to package directory
+        package_dir = Path(__file__).parent
+        out_dir = package_dir / "generated_packages"
         out_dir.mkdir(parents=True, exist_ok=True)
         outfile = out_dir / f"{block_name}.py"
 
@@ -3037,15 +2999,18 @@ class BlockExtractor:
         if self._index_warmed:
             return True
             
-        # If package data is available, use it
-        if self._package_data_available:
-            print("Using pre-built package data...")
-            self._index_warmed = True
-            return True
-            
-        print("Pre-built package data not available, cloning repositories...")
+        # Ensure all repos are cached first
         if not self._ensure_all_repos_cached():
             return False
+
+        # Check if we can hydrate from existing index
+        has_any_index = any(self.index.repo_has_index(repo) for repo in self.repo_cache.repos.keys() 
+                           if self.repo_cache.is_repo_cached(repo))
+        
+        if has_any_index and self.index_mode != "force":
+            print("Hydrating from existing index...")
+        else:
+            print("Preparing for first use, cloning repositories...")
 
         # Index according to policy
         for repo in list(self.repo_cache.repos.keys()):
@@ -3256,19 +3221,23 @@ class BlockExtractor:
             results[block_name] = self.extract_single_block(block_name, validate=validate, cleanup_invalid=cleanup_invalid)
         return results
 
-    def extract_blocks_from_file(self, json_path: Path, limit: Optional[int] = None, 
+    def extract_blocks_from_file(self, json_path: Optional[Path] = None, limit: Optional[int] = None, 
                                 start_from: Optional[str] = None) -> Dict[str, Any]:
         """
         Extract blocks from a JSON file containing block names.
         
         Args:
-            json_path: Path to JSON file containing block names
+            json_path: Path to JSON file containing block names (defaults to nn_block_names.json)
             limit: Maximum number of blocks to process
             start_from: Skip blocks until this name (inclusive), then start
             
         Returns:
             Dictionary containing batch extraction results
         """
+        # Use default JSON path if not provided
+        if json_path is None:
+            json_path = Path(__file__).parent / "config" / "nn_block_names.json"
+            
         try:
             names = self.load_block_list(json_path)
         except Exception as e:
@@ -3446,8 +3415,8 @@ class BlockExtractor:
             Dictionary containing validation results
         """
         try:
-            validator = BlockValidator()
-            is_valid, error = validator.validate_and_move_block(block_name)
+            # Use the same validator instance with correct paths
+            is_valid, error = self.validator.validate_and_move_block(block_name)
             
             validation_result = {
                 "name": block_name,
@@ -3458,7 +3427,8 @@ class BlockExtractor:
             
             # Cleanup invalid blocks if requested
             if cleanup_invalid and not is_valid:
-                invalid_file = Path("ab/rag/generated_packages") / f"{block_name}.py"
+                package_dir = Path(__file__).parent
+                invalid_file = package_dir / "generated_packages" / f"{block_name}.py"
                 if invalid_file.exists():
                     invalid_file.unlink()
                     validation_result["cleaned_up"] = True
