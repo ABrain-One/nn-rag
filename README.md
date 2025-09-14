@@ -62,12 +62,24 @@ from ab.rag import BlockExtractor, BlockValidator
 # Initialize extractor
 extractor = BlockExtractor()
 
+# Warm up the index (clones repos and indexes if needed)
+extractor.warm_index_once()
+
 # Extract a single block
 result = extractor.extract_single_block("ResNet")
 
 # Extract multiple blocks
 results = extractor.extract_multiple_blocks(["ResNet", "VGG"])
 
-# Extract from JSON file
-results = extractor.extract_blocks_from_file("nn_block_names.json")
+# Extract from JSON file (uses default nn_block_names.json)
+results = extractor.extract_blocks_from_file()
+
+# Extract with limit
+results = extractor.extract_blocks_from_file(limit=10)
+
+# Extract with custom JSON file
+results = extractor.extract_blocks_from_file("custom_blocks.json")
+
+# Extract with start_from parameter
+results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
