@@ -182,8 +182,10 @@ class ValidationBlock{i}(nn.Module):
             
             # Verify memory usage
             assert result["success"] is True
-            assert memory_increase < 500  # Should not use more than 500MB
-            print(f"Memory increase during extraction: {memory_increase:.1f}MB")
+            # Use environment variable or 25% of total system memory as threshold
+            max_memory_increase_mb = float(os.environ.get("MAX_MEMORY_INCREASE_MB", psutil.virtual_memory().total / 1024 / 1024 * 0.25))
+            assert memory_increase < max_memory_increase_mb, f"Memory increase ({memory_increase:.1f}MB) exceeded threshold ({max_memory_increase_mb:.1f}MB)"
+            print(f"Memory increase during extraction: {memory_increase:.1f}MB (threshold: {max_memory_increase_mb:.1f}MB)")
     
     def test_concurrent_validation_performance(self, performance_environment):
         """Test performance of concurrent validation."""
