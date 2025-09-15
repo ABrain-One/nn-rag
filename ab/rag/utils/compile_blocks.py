@@ -14,9 +14,9 @@ Why subprocess?
 Outputs a summary to stdout and (optionally) a JSON report.
 
 Usage:
-  python compile_blocks.py --dir generated_packages
+  python compile_blocks.py --dir ab/rag/generated_packages
 Options:
-  --dir DIR               Directory with generated .py files (default: generated_packages)
+  --dir DIR               Directory with generated .py files (default: ab/rag/generated_packages)
   --names FILE.json       Optional JSON array of block names (e.g. ["ConvMixer", ...]); we look for <name>.py
   --pattern GLOB          Only test files matching glob (default: *.py)
   --workers N             Parallel workers (default: min(32, 2 * CPU))
@@ -49,7 +49,7 @@ def default_worker_count() -> int:
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Compile/import check for generated NN blocks.")
-    ap.add_argument("--dir", type=Path, default=Path("generated_packages"))
+    ap.add_argument("--dir", type=Path, default=Path("ab/rag/generated_packages"))
     ap.add_argument("--names", type=Path, default=None, help="JSON array of block names; look for <name>.py inside --dir")
     ap.add_argument("--pattern", type=str, default="*.py")
     ap.add_argument("--workers", type=int, default=default_worker_count())
@@ -267,7 +267,6 @@ def main():
     print(f"OK:   {ok_count}")
     print(f"FAIL: {fail_count}")
     if err_by_type:
-        print("\nErrors by type:")
         for k, v in sorted(err_by_type.items(), key=lambda kv: (-kv[1], kv[0])):
             print(f"  {k:<16} {v}")
     if missing_by_mod:

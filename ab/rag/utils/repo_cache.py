@@ -61,14 +61,20 @@ class RepoCache:
         max_file_mb: int = DEFAULT_MAX_FILE_MB,
         extra_skip_exts: Optional[List[str]] = None,
     ):
-        # Set default paths relative to the workspace root
+        # Set default paths using the path resolver
         if cache_dir is None:
-            cache_dir = ".cache/repo_cache"
+            from .path_resolver import get_cache_dir
+            cache_dir = str(get_cache_dir() / "repo_cache")
         if config_file is None:
-            config_file = str(Path(__file__).parent.parent / "config" / "repo_config.json")
+            from .path_resolver import get_config_file_path
+            config_file = str(get_config_file_path("repo_config.json"))
             
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure repo_cache subdirectory exists
+        self.repo_cache_dir = self.cache_dir / "repo_cache"
+        self.repo_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.cache_index_file = self.cache_dir / "cache_index.json"
         self.config_file = Path(config_file)
@@ -102,14 +108,13 @@ class RepoCache:
             try:
                 return json.loads(self.config_file.read_text(encoding="utf-8"))
             except Exception as e:
-                print(f"⚠️  Warning: Could not load repo config: {e}")
                 return self._get_fallback_config()
         else:
             cfg = self._get_fallback_config()
             try:
                 self.config_file.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
             except Exception as e:
-                print(f"⚠️  Warning: Could not write default repo_config.json: {e}")
+                pass
             return cfg
 
     def _get_fallback_config(self) -> Dict[str, Dict]:
@@ -148,7 +153,7 @@ class RepoCache:
             existing[name] = self.repos[name]
             self.config_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
         except Exception as e:
-            print(f"⚠️  Warning: Could not save repo config: {e}")
+            pass
 
     def remove_repository(self, name: str):
         if name in self.repos:
@@ -156,11 +161,10 @@ class RepoCache:
             try:
                 cfg = self.repos.copy()
                 self.config_file.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-                print(f"✅ Removed repository: {name}")
             except Exception as e:
-                print(f"⚠️  Warning: Could not persist removal: {e}")
+                pass
         else:
-            print(f"⚠️  Repository not found: {name}")
+            pass
 
     def is_repo_cached(self, repo_name: str) -> bool:
         entry = self.cache_index.get(repo_name)
@@ -185,9 +189,18 @@ class RepoCache:
         """
         Ensure repo is present locally. By default, will NOT update an existing repo.
         """
-        if self.is_repo_cached(repo_name):
-            return self.get_cached_repo(repo_name)
-        return self._update_repo_cache(repo_name)
+        try:
+            if self.is_repo_cached(repo_name):
+                return self.get_cached_repo(repo_name)
+            return self._update_repo_cache(repo_name)
+        except Exception as e:
+            # If there's any error, ensure the cache directory exists and try again
+            self.repo_cache_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                return self._update_repo_cache(repo_name)
+            except Exception:
+                # If still fails, return None to indicate the repo is not available
+                return None
 
     def update_repo(self, repo_name: str, policy: Optional[str] = None) -> Optional[Path]:
         """
@@ -202,7 +215,6 @@ class RepoCache:
                 shutil.rmtree(p, ignore_errors=True)
             del self.cache_index[repo_name]
         self._save_cache_index()
-        print("🧹 Cache cleared.")
 
     def get_cache_status(self) -> Dict:
         status = {"cache_dir": str(self.cache_dir), "total_size_mb": 0.0, "repos": {}}
@@ -239,13 +251,11 @@ class RepoCache:
         policy = (update_policy or self.update_policy).lower()
         cfg = self.repos.get(repo_name)
         if not cfg:
-            print(f"⚠️  Unknown repo in config: {repo_name}")
             return None
 
-        repo_path = self.cache_dir / repo_name.replace("/", "_")
+        repo_path = self.repo_cache_dir / repo_name.replace("/", "_")
         url = cfg.get("url")
         if not url:
-            print(f"⚠️  No url for {repo_name}")
             return None
 
         # If exists already…
@@ -265,11 +275,9 @@ class RepoCache:
                         self._prune_large_and_weights(repo_path)
                     return repo_path
                 except subprocess.CalledProcessError as e:
-                    print(f"⚠️  Update failed for {repo_name} ({policy}): {e.stderr or e}")
                     # Keep the old checkout usable
                     return repo_path
             else:
-                print(f"⚠️  Unknown update_policy={policy}, returning existing repo.")
                 return repo_path
 
         # Fresh clone (minimal)
@@ -296,11 +304,9 @@ class RepoCache:
                 self._prune_large_and_weights(repo_path)
 
             self._post_update_index(repo_name, repo_path, sparse=sparse, depth1=True, blobless=True, default_branch=default)
-            print(f"✅ Cached {repo_name} → {repo_path}")
             return repo_path
 
         except subprocess.CalledProcessError as e:
-            print(f"❌ Clone failed for {repo_name}: {e.stderr or e}")
             # Clean broken directory to avoid future confusion
             if repo_path.exists():
                 shutil.rmtree(repo_path, ignore_errors=True)
@@ -362,7 +368,6 @@ class RepoCache:
                 _safe_run(["git", "sparse-checkout", "set", *tops], cwd=repo_path, check=True)
             except subprocess.CalledProcessError:
                 # As a last resort, disable sparse
-                print("⚠️  sparse-checkout set failed; proceeding with full checkout.")
                 _safe_run(["git", "sparse-checkout", "disable"], cwd=repo_path, check=False)
 
     # ------------------------------ git helpers ------------------------------ #
@@ -451,7 +456,6 @@ class RepoCache:
             p = repo / file_path
             return p.read_text(encoding="utf-8") if p.exists() else None
         except Exception as e:
-            print(f"⚠️  Read failed {repo_name}:{file_path}: {e}")
             return None
         finally:
             # Best-effort: return to default branch if we detached
@@ -474,7 +478,6 @@ class RepoCache:
             files = [ln for ln in (result.stdout or "").splitlines() if ln.strip()]
             return [{"path": f, "repo": repo_name} for f in files]
         except Exception as e:
-            print(f"⚠️  grep failed in {repo_name}: {e}")
             return []
 
     def get_repo_tree(self, repo_name: str) -> Dict[str, str]:

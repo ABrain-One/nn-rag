@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Build a JSON array of *neural network block* names (classes acting like nn.Module).
+Build a JSON array of *neural network block* names (classes inheriting from nn.Module).
 
-Heuristics (safe & conservative by default):
+Strict requirements:
   - Top-level classes only.
   - Must define a 'forward' method.
-  - Bases include something that looks like nn.Module:
-      Name: 'Module', 'BaseModule'
-      Attribute: 'nn.Module', 'torch.nn.Module', 'mmengine.model.BaseModule', etc.
-  - Optional: include OpenMMLab registry-decorated classes (@*.register_module()).
+  - Must inherit from Module-like classes:
+      Direct: 'Module', 'nn.Module', 'torch.nn.Module'
+      BaseModule: 'BaseModule', 'mmengine.model.BaseModule', 'mmcv.runner.BaseModule'
+      Or any class ending with '.Module' or '.BaseModule'
 
 No network calls. Uses your local clones (via RepoCache if available, otherwise best-effort path guesses).
 Outputs a *names-only* JSON array, deduped & sorted.
@@ -16,9 +16,9 @@ Outputs a *names-only* JSON array, deduped & sorted.
 Usage:
   python make_nn_block_names.py --config repo_config.json --out nn_block_names.json
 Options:
-  --include-registered       Also allow classes decorated with *.register_module(...)
-  --allow-patterns REGEX...  Additionally allow class names matching any of these regexes
-  --strict-bases             Require a Module-like base even if decorated (default: False)
+  --include-registered       (Deprecated - registry decorators no longer sufficient)
+  --allow-patterns REGEX...  (Deprecated - name patterns no longer sufficient)
+  --strict-bases             (Deprecated - now always strict)
   --public-only              Drop names starting with "_"
   --no-paths-only            If a repo has no "paths" configured, scan whole repo (slower)
   --extra-globs GLOB [...]   Extra globs relative to repo root (e.g., "mmdet/**/*.py")
@@ -61,9 +61,12 @@ def _repo_root_from_cache(cache, repo_name: str) -> Optional[Path]:
 def _guess_local_repo_root(repo_name: str) -> Optional[Path]:
     owner, name = repo_name.split("/", 1)
     # Get the script's directory to make paths relative to it
+    from .utils.path_resolver import get_cache_dir
     script_dir = Path(__file__).parent
+    cache_dir = get_cache_dir()
     candidates = [
-        script_dir / "repo_cache" / f"{owner}_{name}",  # Default repo cache location relative to script
+        cache_dir / "repo_cache" / f"{owner}_{name}",  # Default repo cache location
+        script_dir / "repo_cache" / f"{owner}_{name}",  # Fallback: relative to script
         Path("ab/rag/repo_cache") / f"{owner}_{name}",  # Fallback: relative to current working directory
         Path("repos") / owner / name,
         Path(".cache") / "repos" / owner / name,
@@ -114,6 +117,10 @@ MODULE_LIKE_BASES = {
     "Module",
     "nn.Module",
     "torch.nn.Module",
+}
+
+# Abstract base classes that should not be discovered as blocks
+ABSTRACT_BASE_CLASSES = {
     "BaseModule",
     "mmengine.model.BaseModule",
     "mmcv.runner.BaseModule",
@@ -134,13 +141,40 @@ def _has_forward(class_node: ast.ClassDef) -> bool:
     return False
 
 def _bases_include_module_like(class_node: ast.ClassDef) -> bool:
+    """Check if class inherits from nn.Module or Module (strict check)."""
     for b in class_node.bases:
         dotted = _expr_to_dotted(b)
         if not dotted:
             continue
-        # Accept direct or suffix match (e.g., xyz.Module)
-        if dotted in MODULE_LIKE_BASES or dotted.endswith(".Module") or dotted.endswith(".BaseModule"):
+        # Strict check: must be exactly Module, nn.Module, torch.nn.Module, or end with .Module or .BaseModule
+        if (dotted in MODULE_LIKE_BASES or 
+            dotted.endswith(".Module") or 
+            dotted.endswith(".BaseModule") or
+            dotted == "BaseModule"):
             return True
+    return False
+
+def _is_abstract_base_class(class_node: ast.ClassDef) -> bool:
+    """Check if class is an abstract base class that should not be discovered."""
+    # Check if the class name itself is an abstract base class
+    if class_node.name in ABSTRACT_BASE_CLASSES:
+        return True
+    
+    # Check if class inherits from any BaseModule variant
+    for b in class_node.bases:
+        dotted = _expr_to_dotted(b)
+        if not dotted:
+            continue
+        if dotted in ABSTRACT_BASE_CLASSES or dotted.endswith(".BaseModule"):
+            return True
+    
+    # Check for metaclass=ABCMeta (indicates abstract base class)
+    for keyword in class_node.keywords:
+        if keyword.arg == "metaclass":
+            dotted = _expr_to_dotted(keyword.value)
+            if dotted and "ABCMeta" in dotted:
+                return True
+    
     return False
 
 def _has_openmmlab_register_decorator(class_node: ast.ClassDef) -> bool:
@@ -183,17 +217,10 @@ def _iter_nn_block_names_from_file(
 
         has_fwd = _has_forward(node)
         module_like = _bases_include_module_like(node)
-        has_reg = include_registered and _has_openmmlab_register_decorator(node)
-        name_hint = _looks_like_block_name(cls_name) or any(p.search(cls_name) for p in allow_patterns)
+        is_abstract = _is_abstract_base_class(node)
 
-        # Decision matrix (conservative default):
-        # - Prefer real Module ancestry + forward()
-        # - Allow registry-decorated classes with forward() (for OpenMMLab)
-        # - Optionally allow strong name hints if forward() + (module_like or name_hint)
-        if strict_bases:
-            criteria = has_fwd and module_like
-        else:
-            criteria = has_fwd and (module_like or has_reg or name_hint)
+        # Strict criteria: Must inherit from Module-like class AND have forward() method AND not be abstract base class
+        criteria = has_fwd and module_like and not is_abstract
 
         if criteria:
             names.append(cls_name)
@@ -283,14 +310,15 @@ def build_nn_block_names(
 
 def main():
     ap = argparse.ArgumentParser(description="Create a JSON array of neural network block names from configured repos.")
-    ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config" / "repo_config.json", help="Path to repo_config.json")
-    ap.add_argument("--out", type=Path, default=Path(__file__).parent / "config" / "nn_block_names.json", help="Path to output JSON array")
+    from .utils.path_resolver import get_config_file_path
+    ap.add_argument("--config", type=Path, default=get_config_file_path("repo_config.json"), help="Path to repo_config.json")
+    ap.add_argument("--out", type=Path, default=get_config_file_path("nn_block_names.json"), help="Path to output JSON array")
     ap.add_argument("--include-registered", action="store_true",
-                    help="Also include classes decorated with *.register_module(...) (OpenMMLab registries)")
+                    help="(Deprecated) Registry decorators no longer sufficient - Module inheritance required")
     ap.add_argument("--allow-patterns", nargs="*", default=[],
-                    help="Additionally allow classes whose names match any of these regex patterns")
+                    help="(Deprecated) Name patterns no longer sufficient - Module inheritance required")
     ap.add_argument("--strict-bases", action="store_true",
-                    help="Require Module-like base even if decorated or name-hinted (default: False)")
+                    help="(Deprecated) Now always strict - Module inheritance always required")
     ap.add_argument("--public-only", action="store_true", help="Drop names that start with '_'")
     ap.add_argument("--no-paths-only", dest="paths_only", action="store_false",
                     help="Scan full repo when 'paths' not set (can be slower)")
@@ -323,6 +351,22 @@ def main():
 
     args.out.write_text(json.dumps(names, indent=2), encoding="utf-8")
     log.info("Wrote %d unique nn block names to %s", len(names), args.out)
+
+def discover_nn_block_names() -> List[str]:
+    """Discover neural network block names with sensible defaults for auto-discovery."""
+    from .utils.path_resolver import get_config_file_path
+    config_path = get_config_file_path("repo_config.json")
+    
+    return build_nn_block_names(
+        config_path=config_path,
+        public_only=False,  # Include private classes too
+        include_registered=False,  # Deprecated - not needed
+        strict_bases=True,  # Always strict - Module inheritance required
+        allow_patterns_raw=[],  # Deprecated - not needed
+        paths_only=True,  # Only scan configured paths for speed
+        extra_globs=[],  # No extra globs
+    )
+
 
 if __name__ == "__main__":
     main()

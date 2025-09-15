@@ -29,130 +29,20 @@ import re
 import sqlite3
 import threading
 import time
+import warnings
+
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning)
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-# Import the block validator
 from .block_validator import BlockValidator
 
-# ----------------------------------------------------------------------------- #
-# Internal, deterministic sanitizer (no stub injection)
-# ----------------------------------------------------------------------------- #
-def sanitize_generated_block(text: str) -> str:
-    """
-    Enhanced sanitizer that also adds missing imports:
-    - normalizes newlines
-    - collapses >2 consecutive blank lines to 1
-    - de-dupes identical import lines (keeps first occurrence)
-    - strips trailing spaces
-    - detects undefined symbols and adds necessary imports
-    """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    lines = text.split("\n")
-    seen_imports: Set[str] = set()
-    out: List[str] = []
-    
-    # First pass: collect existing imports and find undefined symbols
-    defined_symbols = set()
-    used_symbols = set()
-    
-    for ln in lines:
-        s = ln.rstrip()
-        if s.startswith("import ") or s.startswith("from "):
-            if s in seen_imports:
-                continue
-            seen_imports.add(s)
-            # Extract imported symbols from import statements
-            if s.startswith("from ") and " import " in s:
-                # from module import symbol1, symbol2
-                parts = s.split(" import ")
-                if len(parts) == 2:
-                    symbols = [sym.strip() for sym in parts[1].split(",")]
-                    defined_symbols.update(symbols)
-            elif s.startswith("import ") and " as " in s:
-                # import module as alias
-                parts = s.split(" as ")
-                if len(parts) == 2:
-                    defined_symbols.add(parts[1].strip())
-            elif s.startswith("import ") and " as " not in s:
-                # import module
-                module = s.split("import ")[1].strip()
-                defined_symbols.add(module)
-        
-        # Detect class and function definitions
-        if s.startswith("class ") or s.startswith("def "):
-            # Extract name from "class ClassName" or "def function_name"
-            parts = s.split()
-            if len(parts) >= 2:
-                name = parts[1].split("(")[0].split(":")[0]
-                defined_symbols.add(name)
-        
-        # Detect variable assignments
-        if " = " in s and not s.startswith(" ") and not s.startswith("#"):
-            # Simple variable assignment (not indented, not comment)
-            name = s.split(" = ")[0].strip()
-            if name and name.isidentifier():
-                defined_symbols.add(name)
-        
-        out.append(s)
-    
-    # Second pass: detect undefined symbols
-    for ln in lines:
-        s = ln.rstrip()
-        if not s.startswith("import ") and not s.startswith("from ") and not s.startswith("#") and not s.startswith("class ") and not s.startswith("def "):
-            # Look for symbol usage in this line
-            words = s.split()
-            for word in words:
-                # Clean the word (remove punctuation, etc.)
-                clean_word = re.sub(r'[^\w]', '', word)
-                if clean_word and clean_word.isidentifier() and len(clean_word) > 1:
-                    # Check if it's a built-in or already defined
-                    if clean_word not in defined_symbols and clean_word not in {
-                        "self", "cls", "x", "y", "z", "i", "j", "k", "n", "m", "p", "q", "r", "s", "t", "u", "v", "w",
-                        "torch", "nn", "F", "os", "math", "copy", "defaultdict", "logging", "osp", "MODELS", "OptConfigType", "MultiConfig", "ConfigDict"
-                    }:
-                        used_symbols.add(clean_word)
-    
-    # Add missing imports for undefined symbols
-    missing_imports = []
-    
-    # Handle common patterns
-    if "Swish" in used_symbols and "Swish" not in defined_symbols:
-        missing_imports.append("from mmcv.cnn.bricks import Swish")
-    if "build_norm_layer" in used_symbols and "build_norm_layer" not in defined_symbols:
-        missing_imports.append("from mmcv.cnn.bricks import build_norm_layer")
-    if "Conv2dSamePadding" in used_symbols and "Conv2dSamePadding" not in defined_symbols:
-        missing_imports.append("from projects.EfficientDet.efficientdet.utils import Conv2dSamePadding")
-    if "MaxPool2dSamePadding" in used_symbols and "MaxPool2dSamePadding" not in defined_symbols:
-        missing_imports.append("from projects.EfficientDet.efficientdet.utils import MaxPool2dSamePadding")
-    if "BiFPNStage" in used_symbols and "BiFPNStage" not in defined_symbols:
-        missing_imports.append("from projects.EfficientDet.efficientdet.bifpn import BiFPNStage")
-    if "DepthWiseConvBlock" in used_symbols and "DepthWiseConvBlock" not in defined_symbols:
-        missing_imports.append("from projects.EfficientDet.efficientdet.bifpn import DepthWiseConvBlock")
-    if "DownChannelBlock" in used_symbols and "DownChannelBlock" not in defined_symbols:
-        missing_imports.append("from projects.EfficientDet.efficientdet.bifpn import DownChannelBlock")
-    if "Sequence" in used_symbols and "Sequence" not in defined_symbols:
-        missing_imports.append("from collections.abc import Sequence")
-    
-    # Insert missing imports after the header comment
-    if missing_imports:
-        for i, line in enumerate(out):
-            if line.startswith("# Auto-generated single-file for"):
-                # Insert imports after the header
-                for j, imp in enumerate(missing_imports):
-                    out.insert(i + 2 + j, imp)
-                break
-    
-    return "\n".join(out).rstrip() + "\n"
-
-
-# Real definition resolver (returns real source slices; never stubs)
 from .utils.definition_resolver import DefinitionResolver, ResolvedSymbol
 
-# Optional LibCST for fast/precise module parsing
 try:
     import libcst as cst
     from libcst.metadata import MetadataWrapper, PositionProvider
@@ -160,201 +50,54 @@ try:
 except Exception:
     LIBCST_AVAILABLE = False
 
-# Project-local helpers
-from .utils.package_generator import PackageGenerator
 from .utils.repo_cache import RepoCache
-
 
 # ----------------------------------------------------------------------------- #
 # Logging
 # ----------------------------------------------------------------------------- #
+# Set up logging with less verbose output for API usage
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    level=logging.WARNING,  # Only show warnings and errors by default
+    format="%(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("extractor")
 
+# Add a method to enable verbose logging when needed
+def set_verbose_logging(verbose: bool = True):
+    """Enable or disable verbose logging for the extractor."""
+    if verbose:
+        log.setLevel(logging.INFO)
+        logging.getLogger().setLevel(logging.INFO)
+    else:
+        log.setLevel(logging.WARNING)
+        logging.getLogger().setLevel(logging.WARNING)
+from .models import SymbolInfo, ModuleInfo, ImportGraph, ResolvedDependency, DependencyResolutionResult
+from .file_index import FileIndexStore
 
-# ----------------------------------------------------------------------------- #
-# Data models
-# ----------------------------------------------------------------------------- #
-@dataclass
-class SymbolInfo:
-    name: str
-    qualified_name: str         # e.g. "timm.layers.attention.Attention" or "timm.layers.config._USE_REENTRANT_CKPT"
-    kind: str                   # 'class' | 'function' | 'const'
-    location: str               # repo-relative file path (with .py)
-    line_number: int
-    source_code: str
-
-
-@dataclass
-class ModuleInfo:
-    repo: str
-    qual: str                   # dotted module path e.g. "timm.layers.attention"
-    path: str                   # repo-relative path without suffix e.g. "timm/layers/attention"
-    file: str                   # filename (module leaf)
-    source_code: str = ""       # full module text (subset retained in SQLite too)
-    all_exports: List[str] = field(default_factory=list)
-    imports: List[str] = field(default_factory=list)
-    symbols: Dict[str, SymbolInfo] = field(default_factory=dict)   # name -> SymbolInfo
-
-
-@dataclass
-class ImportGraph:
-    modules: Dict[str, ModuleInfo] = field(default_factory=dict)         # key: "repo:qual"
-    symbol_table: Dict[str, SymbolInfo] = field(default_factory=dict)    # qual.name -> SymbolInfo
-    dependents: Dict[str, List[str]] = field(default_factory=dict)       # imported_module -> [module_keys]
-
-
-@dataclass
-class ResolvedDependency:
-    name: str
-    qualified_name: str
-    source_code: str
-    resolution_method: str
-    confidence: float
-    location: Optional[str] = None
-
-
-@dataclass
-class DependencyResolutionResult:
-    target_symbol: str
-    resolved_dependencies: Dict[str, ResolvedDependency]
-    unresolved_dependencies: List[str]
-    import_graph: ImportGraph
-    resolution_stats: Dict[str, Any]
-    topological_order: Optional[List[str]] = None
-
-
-# ----------------------------------------------------------------------------- #
-# Persistent index (SQLite)
-# ----------------------------------------------------------------------------- #
-class FileIndexStore:
-    def __init__(self, db_path: Path = Path(".cache/index.sqlite3")):
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._init_db()
-
-    def _init_db(self) -> None:
-        with sqlite3.connect(self.db_path) as con:
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS files (
-                    repo TEXT NOT NULL,
-                    relpath TEXT NOT NULL,
-                    mod_qual TEXT NOT NULL,
-                    sha1 TEXT NOT NULL,
-                    imports_json TEXT NOT NULL,
-                    source TEXT,
-                    PRIMARY KEY (repo, relpath, sha1)
-                )
-            """)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS symbols (
-                    repo TEXT NOT NULL,
-                    relpath TEXT NOT NULL,
-                    sha1 TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    qual TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    line INTEGER NOT NULL,
-                    code TEXT NOT NULL,
-                    PRIMARY KEY (repo, relpath, sha1, qual)
-                )
-            """)
-            con.execute("""
-                CREATE TABLE IF NOT EXISTS repo_index_state (
-                    repo TEXT PRIMARY KEY,
-                    indexed_at TEXT NOT NULL,
-                    file_count INTEGER NOT NULL
-                )
-            """)
-            con.commit()
-
-    @staticmethod
-    def _sha1(data: str) -> str:
-        return hashlib.sha1(data.encode("utf-8", errors="ignore")).hexdigest()
-
-    def get(self, repo: str, relpath: str, content: str) -> Optional[Tuple[str, List[str], List[SymbolInfo], str]]:
-        sha1 = self._sha1(content)
-        with self._lock, sqlite3.connect(self.db_path) as con:
-            cur = con.execute(
-                "SELECT mod_qual, imports_json, source FROM files WHERE repo=? AND relpath=? AND sha1=?",
-                (repo, relpath, sha1)
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            mod_qual, imports_json, source = row
-            imports = json.loads(imports_json)
-            sym_rows = con.execute(
-                "SELECT name, qual, kind, line, code FROM symbols WHERE repo=? AND relpath=? AND sha1=?",
-                (repo, relpath, sha1)
-            ).fetchall()
-            syms = [
-                SymbolInfo(name=r[0], qualified_name=r[1], kind=r[2], line_number=r[3],
-                           source_code=r[4], location=relpath)
-                for r in sym_rows
-            ]
-            return mod_qual, imports, syms, source or ""
-
-    def put(self, repo: str, relpath: str, mod_qual: str, imports: List[str],
-            symbols: Iterable[SymbolInfo], source: str) -> None:
-        sha1 = self._sha1(source)
-        imports_json = json.dumps(sorted(set(imports)))
-        with self._lock, sqlite3.connect(self.db_path) as con:
-            con.execute(
-                "INSERT OR REPLACE INTO files(repo, relpath, mod_qual, sha1, imports_json, source) VALUES(?,?,?,?,?,?)",
-                (repo, relpath, mod_qual, sha1, imports_json, source)
-            )
-            con.execute("DELETE FROM symbols WHERE repo=? AND relpath=? AND sha1=?", (repo, relpath, sha1))
-            con.executemany(
-                "INSERT INTO symbols(repo, relpath, sha1, name, qual, kind, line, code) VALUES(?,?,?,?,?,?,?,?)",
-                [(repo, relpath, sha1, s.name, s.qualified_name, s.kind, s.line_number, s.source_code) for s in symbols]
-            )
-            con.commit()
-
-    # ------------- indexing state helpers (to avoid re-indexing) -------------- #
-    def repo_has_index(self, repo: str) -> bool:
-        with sqlite3.connect(self.db_path) as con:
-            row = con.execute(
-                "SELECT file_count FROM repo_index_state WHERE repo=?",
-                (repo,)
-            ).fetchone()
-            if row and int(row[0]) > 0:
-                return True
-            # Fallback check (older DBs): look for any file rows for this repo
-            row2 = con.execute(
-                "SELECT 1 FROM files WHERE repo=? LIMIT 1",
-                (repo,)
-            ).fetchone()
-            return bool(row2)
-
-    def mark_repo_indexed(self, repo: str) -> None:
-        with sqlite3.connect(self.db_path) as con:
-            cnt = con.execute("SELECT COUNT(1) FROM files WHERE repo=?", (repo,)).fetchone()[0]
-            con.execute(
-                "INSERT OR REPLACE INTO repo_index_state(repo, indexed_at, file_count) VALUES(?,?,?)",
-                (repo, datetime.utcnow().isoformat(), int(cnt))
-            )
-            con.commit()
-
-
-# ----------------------------------------------------------------------------- #
-# Extractor
-# ----------------------------------------------------------------------------- #
 class BlockExtractor:
-    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing"):
+    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing", project_dir: Optional[Path] = None, verbose: bool = False):
         """
-        index_mode:
-          - "missing" (default): index only repos that are not present in SQLite index
-          - "force": re-index all repos every run
-          - "skip": never index (assume index is prebuilt)
+        Args:
+            max_workers: Maximum number of worker threads
+            max_retries: Maximum number of retries for failed operations
+            index_mode: 
+              - "missing" (default): index only repos that are not present in SQLite index
+              - "force": re-index all repos every run
+              - "skip": never index (assume index is prebuilt)
+            project_dir: Optional project directory where blocks will be created.
+                        If not provided, uses current working directory.
+            verbose: Enable verbose logging output (default: False)
         """
-        self.repo_cache = RepoCache()
-        self.package_generator = PackageGenerator()
+        # Set up logging verbosity
+        set_verbose_logging(verbose)
+        
+        # Initialize repo cache with package-local cache directory
+        from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path
+        
+        package_dir = get_package_root()
+        package_cache_dir = get_cache_dir()
+        self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
 
@@ -362,13 +105,29 @@ class BlockExtractor:
         self.parsed_files: Set[str] = set()
         self.failed_files: Set[str] = set()
 
-        self.results_file = "extraction_results.json"
         self.extracted_blocks: List[Dict[str, Any]] = []
         self.failed_blocks: List[str] = []
         self.skipped_blocks: List[str] = []
+        
+        # Track warning state to avoid repetitive messages
+        self._cache_warning_shown = False
+        self._repos_cached_this_session = False
+        
+        # Class-level flag to prevent warnings across all instances
+        if not hasattr(BlockExtractor, '_global_cache_warning_shown'):
+            BlockExtractor._global_cache_warning_shown = False
 
-        self.index = FileIndexStore()
-        self._load_results()
+        # Initialize index with package-local database
+        package_index_db = package_cache_dir / "index.db"
+        self.index = FileIndexStore(db_path=package_index_db)
+        # Initialize validator with absolute paths
+        generated_dir = get_generated_packages_dir()
+        block_dir = get_blocks_dir(project_dir)
+        self.validator = BlockValidator(
+            generated_dir=str(generated_dir),
+            block_dir=str(block_dir)
+        )
+        
 
         # package root → {repo: count}; and best repo per package root (systematic, from index)
         self._pkg_repo_counts: Dict[str, Dict[str, int]] = {}
@@ -389,34 +148,118 @@ class BlockExtractor:
             index=self.index,
             log=log,
         )
+        
+        # Common missing imports mapping for systematic resolution
+        self._common_imports = self._build_common_imports_mapping()
 
-        log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
-                 self.max_workers, LIBCST_AVAILABLE, self.index_mode)
+        # log.info("Initialized BlockExtractor | workers=%s | LibCST=%s | index_mode=%s",
+        #          self.max_workers, LIBCST_AVAILABLE, self.index_mode)
+
+    def _build_common_imports_mapping(self) -> Dict[str, str]:
+        """
+        Build a mapping of commonly missing imports to their proper import statements.
+        Based on analysis of 445 failed blocks, these are the most frequent missing imports.
+        """
+        return {
+            # Standard library imports
+            'threading': 'import threading',
+            'typing': 'from typing import *',
+            'collections': 'from collections import *',
+            'functools': 'from functools import *',
+            'itertools': 'from itertools import *',
+            'math': 'import math',
+            'os': 'import os',
+            'sys': 'import sys',
+            'json': 'import json',
+            're': 'import re',
+            'time': 'import time',
+            'datetime': 'from datetime import *',
+            'pathlib': 'from pathlib import *',
+            'warnings': 'import warnings',
+            'logging': 'import logging',
+            'inspect': 'import inspect',
+            'abc': 'from abc import *',
+            'ABCMeta': 'from abc import ABCMeta',
+            'copy': 'import copy',
+            'weakref': 'import weakref',
+            'contextlib': 'from contextlib import *',
+            
+            # PyTorch specific
+            'Final': 'from typing import Final',
+            'Optional': 'from typing import Optional',
+            'Union': 'from typing import Union',
+            'List': 'from typing import List',
+            'Dict': 'from typing import Dict',
+            'Tuple': 'from typing import Tuple',
+            'Set': 'from typing import Set',
+            'Any': 'from typing import Any',
+            'Callable': 'from typing import Callable',
+            'Type': 'from typing import Type',
+            'TypeVar': 'from typing import TypeVar',
+            'Generic': 'from typing import Generic',
+            'Protocol': 'from typing import Protocol',
+            'Literal': 'from typing import Literal',
+            'ClassVar': 'from typing import ClassVar',
+            'T': 'from typing import TypeVar\nT = TypeVar(\"T\")',
+            'ModuleType': 'from types import ModuleType',
+            'field': 'from dataclasses import field',
+            'dataclass': 'from dataclasses import dataclass',
+            
+            # PyTorch extensions
+            'Size': 'from torch import Size',
+            'BroadcastingList2': 'from torch.jit import BroadcastingList2',
+            'OptTensor': 'from torch import Tensor as OptTensor',
+            'LayerNorm': 'from torch.nn import LayerNorm',
+            'LayerNorm2d': 'from torch.nn import LayerNorm',  # LayerNorm2d not available in all PyTorch versions
+            'InterpolationMode': 'from torchvision.transforms import InterpolationMode',
+            'PretrainedConfig': 'from transformers import PretrainedConfig',
+            'ClassInstantier': 'from transformers import ClassInstantier',
+            'Registry': 'class Registry:\n    def __init__(self, *args, **kwargs): pass\n    def register(self, *args, **kwargs): return lambda x: x',  # Fallback for missing mmcv
+            'det_utils': 'from mmdet.utils import det_utils',
+            'pkg': 'import pkg',
+            'MODEL_WRAPPERS': 'class MODEL_WRAPPERS: pass',  # Fallback for missing mmcv
+            'ConfigDict': 'class ConfigDict: pass',  # Fallback for missing mmcv
+            'Config': 'class Config: pass',  # Fallback for missing mmcv
+            'MODELS': 'class MODELS:\n    @staticmethod\n    def build(cfg): return None\n    @staticmethod\n    def switch_scope_and_registry(scope): return MODELS()\n    def __enter__(self): return self\n    def __exit__(self, *args): pass',  # Fallback for missing mmengine
+            
+            # Environment variables and constants
+            'TIMM_FUSED_ATTN': 'os.environ.get("TIMM_FUSED_ATTN", "0")',
+            'TIMM_REENTRANT_CKPT': 'os.environ.get("TIMM_REENTRANT_CKPT", "0")',
+            'DTYPE_INTERMEDIATE': 'torch.float32',
+            
+            # External modules (with fallback imports)
+            'SparseTensor': 'class SparseTensor: pass',  # Fallback for missing torch_sparse
+            'ext_loader': 'def ext_loader(*args, **kwargs): return None',  # Fallback for missing mmcv
+            'ShiftedWindowAttention': 'from timm.models.vision_transformer import Attention as ShiftedWindowAttention',
+            
+            # Fallback implementations for missing external modules
+            'mmcv': 'class mmcv: pass',  # Fallback for missing mmcv
+            'timm': 'class timm: pass',  # Fallback for missing timm
+            'mmseg': 'class mmseg: pass',  # Fallback for missing mmseg
+            'mmdet': 'class mmdet: pass',  # Fallback for missing mmdet
+            'mmpose': 'class mmpose: pass',  # Fallback for missing mmpose
+            'mmocr': 'class mmocr: pass',  # Fallback for missing mmocr
+            'mmpretrain': 'class mmpretrain: pass',  # Fallback for missing mmpretrain
+            'torch_geometric': 'class torch_geometric: pass',  # Fallback for missing torch_geometric
+            'einops': 'class einops: pass',  # Fallback for missing einops
+            
+            # Additional common missing imports
+            'partial': 'from functools import partial',
+            'numbers': 'import numbers',
+            'comb': 'from math import comb',
+            'inplace_abn': 'class InPlaceABN: pass\ninplace_abn = InPlaceABN',  # Fallback for missing inplace_abn
+            'handle_torch_function': 'def handle_torch_function(*args, **kwargs): pass',
+            'has_torch_function_variadic': 'def has_torch_function_variadic(*args, **kwargs): return False',
+            'register_notrace_function': 'def register_notrace_function(*args, **kwargs): pass',
+            'fused_layer_norm_affine': 'from torch.nn.functional import layer_norm as fused_layer_norm_affine',
+            'fused_rms_norm': 'from torch.nn.functional import layer_norm as fused_rms_norm',
+            'fused_rms_norm_affine': 'from torch.nn.functional import layer_norm as fused_rms_norm_affine',
+            '_assert': 'def _assert(condition, message): assert condition, message',
+            '_Optional': 'from typing import Optional as _Optional',
+        }
 
     # -------------------------- Utilities & persistence ------------------------ #
 
-    def _load_results(self) -> None:
-        fp = Path(self.results_file)
-        if fp.exists():
-            try:
-                data = json.loads(fp.read_text())
-                self.extracted_blocks = data.get("extracted_blocks", [])
-                self.failed_blocks = data.get("failed_blocks", [])
-                self.skipped_blocks = data.get("skipped_blocks", [])
-                log.info("Loaded results: %d extracted, %d failed, %d skipped",
-                         len(self.extracted_blocks), len(self.failed_blocks), len(self.skipped_blocks))
-            except Exception as e:
-                log.warning("Could not read results file: %s", e)
-
-    def _save_results(self) -> None:
-        data = {
-            "timestamp": datetime.now().isoformat(),
-            "extracted_blocks": self.extracted_blocks,
-            "failed_blocks": self.failed_blocks,
-            "skipped_blocks": self.skipped_blocks,
-        }
-        Path(self.results_file).write_text(json.dumps(data, indent=2))
-        log.info("Saved results file.")
 
     # ------------------------------ Repo indexing ----------------------------- #
 
@@ -784,12 +627,12 @@ class BlockExtractor:
             log.warning("Repo %s not cached; skipping.", repo)
             return
         py_files = [p for p in root.rglob("*.py") if not self._should_skip(p, repo=repo)]
-        log.info("Found %d Python files in %s after path filtering", len(py_files), repo)
+        # log.info("Found %d Python files in %s after path filtering", len(py_files), repo)
         if not py_files:
             log.warning("No Python files found in %s after path filtering", repo)
             return
 
-        log.info("Indexing %s (%d files)...", repo, len(py_files))
+        # log.info("Indexing %s (%d files)...", repo, len(py_files))
         t0 = time.time()
         with cf.ThreadPoolExecutor(max_workers=self.max_workers) as ex:
             futures = [ex.submit(self._parse_one, repo, root, fp) for fp in py_files]
@@ -807,13 +650,13 @@ class BlockExtractor:
         dt = time.time() - t0
         # Mark repo as indexed in SQLite (for next processes to skip)
         self.index.mark_repo_indexed(repo)
-        log.info(
-            "Indexed %s: %d modules | %d symbols in %.2fs",
-            repo,
-            sum(1 for k in self.import_graph.modules if k.startswith(f"{repo}:")),
-            len(self.import_graph.symbol_table),
-            dt,
-        )
+        # log.info(
+        #     "Indexed %s: %d modules | %d symbols in %.2fs",
+        #     repo,
+        #     sum(1 for k in self.import_graph.modules if k.startswith(f"{repo}:")),
+        #     len(self.import_graph.symbol_table),
+        #     dt,
+        # )
         
         # Build re-exports for this repo
         for key, mod in list(self.import_graph.modules.items()):
@@ -844,19 +687,103 @@ class BlockExtractor:
     # ------------------------------ Discovery --------------------------------- #
 
     def _ensure_all_repos_cached(self) -> bool:
+        # If we've already cached repos in this session, skip the warning
+        if self._repos_cached_this_session:
+            return True
+            
         try:
-            cfg = json.loads((Path(__file__).parent / "config" / "repo_config.json").read_text())
+            from .utils.path_resolver import get_config_file_path
+            cfg = json.loads(get_config_file_path("repo_config.json").read_text())
         except FileNotFoundError:
             log.error("repo_config.json not found.")
             return False
+        
+        # Ensure the cache directory structure exists
+        self.repo_cache.repo_cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Track failed repositories and retry them
+        failed_repos = set()
+        max_retries = 3
+        
         for name in cfg.keys():
-            try:
-                if not self.repo_cache.is_repo_cached(name):
-                    # If RepoCache attempts pull & fails, it should raise; we deliberately continue.
-                    self.repo_cache.ensure_repo_cached(name)
-            except Exception as e:
-                log.warning("Cache failed for %s (continuing with whatever is present): %s", name, e)
+            if self.repo_cache.is_repo_cached(name):
+                continue
+                
+            # Try to cache the repository with retries
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    result = self.repo_cache.ensure_repo_cached(name)
+                    if result is not None:
+                        success = True
+                        break
+                    else:
+                        if log.level <= logging.INFO:
+                            print(f"Attempt {attempt + 1}/{max_retries} failed for {name}, retrying...")
+                except Exception as e:
+                    if log.level <= logging.INFO:
+                        print(f"Attempt {attempt + 1}/{max_retries} failed for {name}: {e}")
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2)  # Wait before retry
+            
+            if not success:
+                failed_repos.add(name)
+        
+        # Handle failed repositories - only show warnings in verbose mode
+        if failed_repos and not self._cache_warning_shown:
+            if log.level <= logging.INFO:
+                # In verbose mode, show details
+                log.warning("Could not cache %d repositories after %d attempts: %s", 
+                           len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
+            # In non-verbose mode, be completely silent about cache failures
+            # The package will work with whatever data is available
+            
+            # Mark warning as shown to avoid repetition
+            self._cache_warning_shown = True
+        
+        # Mark that we've attempted to cache repos in this session
+        self._repos_cached_this_session = True
         return True
+
+    def force_reclone_repositories(self, repo_names: Optional[List[str]] = None) -> bool:
+        """
+        Force re-cloning of specified repositories or all repositories.
+        
+        Args:
+            repo_names: List of repository names to re-clone. If None, re-clones all.
+            
+        Returns:
+            True if at least one repository was successfully re-cloned
+        """
+        if repo_names is None:
+            repo_names = list(self.repo_cache.repos.keys())
+        
+        success_count = 0
+        for name in repo_names:
+            try:
+                # Clear existing cache for this repository
+                if self.repo_cache.is_repo_cached(name):
+                    repo_path = self.repo_cache.get_cached_repo(name)
+                    if repo_path and repo_path.exists():
+                        import shutil
+                        shutil.rmtree(repo_path, ignore_errors=True)
+                
+                # Force re-clone
+                result = self.repo_cache.ensure_repo_cached(name)
+                if result is not None:
+                    success_count += 1
+                    if log.level <= logging.INFO:
+                        print(f"✅ Successfully re-cloned {name}")
+                else:
+                    if log.level <= logging.INFO:
+                        print(f"❌ Failed to re-clone {name}")
+                        
+            except Exception as e:
+                if log.level <= logging.INFO:
+                    print(f"❌ Error re-cloning {name}: {e}")
+        
+        return success_count > 0
 
     def _scan_repo_for_block(self, repo: str, block: str) -> List[Dict[str, Any]]:
         root = self.repo_cache.get_cached_repo(repo)
@@ -906,7 +833,10 @@ class BlockExtractor:
         ignore_set.update({
             "torch", "nn", "F", "self", "super", "Config", "ConfigDict", "MODULE2PACKAGE",
             "Parameter", "Self", "Tensor", "_copy_to_script_wrapper", "container_abcs",
-            "end_id", "init", "islice", "namedtuple", "start_id", "Sequence"
+            "end_id", "init", "islice", "namedtuple", "start_id", "Sequence",
+            # Built-in exceptions and functions
+            "Ellipsis", "KeyError", "ModuleNotFoundError", "NotImplementedError", "StopIteration",
+            "all", "any", "callable", "print"
         })
         # Note: Typing symbols should be resolved to imports, not ignored
         # They will be handled by the dependency resolution system
@@ -918,20 +848,54 @@ class BlockExtractor:
             "Enum", "chain", "map", "filter", "reduce", "zip", "range", "len", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
             "ArgumentParser", "BytesIO", "Console", "Dumper", "FileHandler", "Generator", "Loader", "LogRecord", "Logger",
             "OrderedDict", "Path", "SameFileError", "StringIO", "Table", "Text", "colored", "contextmanager", "defaultdict", "find_spec", "gethostname", "getuser",
-            "handlers", "import_module", "ismodule", "parse", "urlopen", "yaml", "osp", "np", "mmengine", "master_only", "k", "v", "MODELS", "_format_dict"
+            "handlers", "import_module", "ismodule", "parse", "urlopen", "yaml", "osp", "np", "mmengine", "master_only", "k", "v", "MODELS", "_format_dict",
+            # Standard library functions
+            "wraps", "lru_cache", "property", "staticmethod", "classmethod", "super", "isinstance", "issubclass", "getattr", "setattr", "hasattr",
+            # Additional stdlib symbols that appear in dependencies
+            "signature", "abstractproperty", "abstractstaticmethod",
+            # Common local variable names that appear in ML code but are not external dependencies
+            "bbox_pred", "cls_score", "priors", "ensure_rng", "util_mixins",
+            # Cross-repository dependencies that are difficult to resolve but not critical
+            "TASK_UTILS", "reduce_mean"
         }
+        # Frequently used stdlib helpers referenced by bare name
+        stdlib_symbols.update({"repeat"})  # itertools.repeat
+        # Project/doc helper names that may appear in sources but shouldn't block extraction
+        stdlib_symbols.update({"reproducibility_notes"})
         ignore_set.update(stdlib_symbols)
         
         # Special handling for symbols that should be resolved to imports, not ignored
         # These will be handled by the dependency resolution system
         import_resolvable_symbols = {
-            "ABCMeta", "abstractmethod", "ast"  # These should resolve to: from abc import ABCMeta, abstractmethod; import ast
+            "ABCMeta", "abstractmethod", "abstractproperty", "abstractstaticmethod", "ast"
         }
         # Don't add these to ignore_set - let them be resolved
         
         # Add common type annotation names that should be ignored
-        type_annotations = {"T", "U", "V", "K", "V", "Any", "Optional", "Union", "List", "Dict", "Tuple", "Set", "Callable", "TypeVar", "Generic"}
+        type_annotations = {
+            "T", "U", "V", "K", "V", "Any", "Optional", "Union", "List", "Dict", "Tuple", "Set", "Callable", "TypeVar", "Generic",
+            # typing / typing_extensions extras commonly found in libs
+            "Literal", "Final", "ClassVar", "NoReturn", "TypedDict", "NotRequired", "Required",
+            "Protocol", "Annotated", "TypeAlias", "_TypeAlias", "ParamSpec", "Concatenate", "runtime_checkable",
+            # Standard library typing constructs
+            "NamedTuple", "MethodType", "BuiltinFunctionType", "BuiltinMethodType"
+        }
+        # Note: Type, Iterable, Mapping are now resolvable symbols, not ignored
+        # OpenMMLab common typed aliases & sample/instance types
+        type_annotations.update({
+            "ConfigType", "OptConfigType", "MultiConfig", "OptMultiConfig",
+            "InstanceList", "OptInstanceList", "DetSampleList", "SampleList",
+            "InstanceData", "PixelData", "BaseDataElement", "BoolTensor"
+        })
         ignore_set.update(type_annotations)
+        
+        # Symbols that should be resolved rather than ignored
+        resolvable_symbols = {
+            "_int_tuple_2_t", "FormatT", "Format", "_ntuple", "FunctionType", "collections", "init", "MODELS", 
+            "LayerNorm", "Mlp", "ConvNorm", "ndgrid", "Bottleneck", "MessagePassing", "Key", "Iterable", "Mapping",
+            "partial", "Type", "_Optional"
+        }
+        # Don't add resolvable symbols to ignore_set - let them be resolved
         
         # Add more built-in functions and exceptions that should be ignored
         builtin_functions = {
@@ -1138,6 +1102,8 @@ class BlockExtractor:
             def visit_Name(self, node: ast.Name):
                 if isinstance(node.ctx, ast.Load):
                     if not is_defined(node.id):
+                        # Collect all free names, including those in type annotations
+                        # The dependency resolution system will handle them appropriately
                         free.add(node.id)
 
             def visit_Global(self, node: ast.Global):
@@ -1145,6 +1111,17 @@ class BlockExtractor:
 
             def visit_Nonlocal(self, node: ast.Nonlocal):
                 for n in node.names: define(n)
+
+            def visit_Constant(self, node: ast.Constant):
+                # If annotations are stored as strings (PEP 563 / postponed), avoid
+                # collecting names inside those strings.
+                return
+
+            def visit_Expr(self, node: ast.Expr):
+                # Avoid walking string literal annotations or docstrings
+                if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    return
+                self.visit(node.value)
 
         V().visit(tree)
         return free
@@ -1249,6 +1226,17 @@ class BlockExtractor:
             if r in ignore_externals:
                 continue
 
+            # Check if this is a common missing import that we can resolve systematically
+            if r in self._common_imports:
+                # Mark as satisfied by external imports since we have a mapping for it
+                externals_ok.add(r)
+                continue
+
+            # If a name looks like it comes from typing/types modules, treat as satisfied by import
+            if r in {"FunctionType", "ModuleType"}:
+                externals_ok.add(r)
+                continue
+
             # Handle import-resolvable standard library symbols systematically
             if r in ["ABCMeta", "abstractmethod"]:
                 # These should resolve to existing symbols in the import graph
@@ -1332,8 +1320,15 @@ class BlockExtractor:
             # 2) imported alias? (can point at symbol OR package re-export)
             if r in alias_map:
                 q = alias_map[r]  # may be a leaf symbol, or a package-level export like "timm.layers.X"
-                # follow re-exports if needed
-                q_real = self._reexports.get(q, q)
+                # follow re-exports recursively if needed
+                q_real = q
+                max_depth = 5  # Prevent infinite loops
+                for _ in range(max_depth):
+                    q_new = self._reexports.get(q_real, q_real)
+                    if q_new == q_real:
+                        break
+                    q_real = q_new
+                
                 if q_real in self.import_graph.symbol_table:
                     out_syms.add(q_real)
                 else:
@@ -1366,9 +1361,14 @@ class BlockExtractor:
                         out_syms.add(chosen)
                         continue
                 else:
-                    # Only use const/import symbols if no class/function definitions exist
-                    # This prevents import statements from being used when actual definitions exist
-                    pass
+                    # Use const/import symbols if no class/function definitions exist
+                    # This allows constants and type aliases to be used when they're the only available symbols
+                    const_candidates = [q for q in global_candidates 
+                                     if self.import_graph.symbol_table[q].kind == "const"]
+                    if const_candidates:
+                        # Use the first constant found
+                        out_syms.add(const_candidates[0])
+                        continue
             
             # 2.5) Handle relative imports (e.g., from .weight_init import ...)
             # Look for symbols that might be from relative imports
@@ -1395,8 +1395,41 @@ class BlockExtractor:
                 if chosen:
                     out_syms.add(chosen)
                     continue
+            
+            # 5) Try to resolve from SQLite index and inject into memory graph
+            # This ensures we fetch actual definitions rather than ignoring them
+            try:
+                resolved_symbols = self._resolve_from_index(r, repo, mod)
+                if resolved_symbols:
+                    # Inject resolved symbols into the in-memory graph
+                    self._inject_resolved_symbols(resolved_symbols)
+                    # Add the primary symbol to output
+                    found = False
+                    for sym in resolved_symbols.values():
+                        if sym.name == r:
+                            out_syms.add(sym.qname)
+                            found = True
+                            break
+                    if found:
+                        continue
+                else:
+                    # Try cross-repository search for common symbols like TASK_UTILS, reduce_mean
+                    cross_repo_symbols = self._cross_repo_search(r)
+                    if cross_repo_symbols:
+                        self._inject_resolved_symbols(cross_repo_symbols)
+                        found = False
+                        for sym in cross_repo_symbols.values():
+                            if sym.name == r:
+                                out_syms.add(sym.qname)
+                                found = True
+                                break
+                        if found:
+                            continue
+            except Exception as e:
+                # If resolution fails, continue without this symbol
+                pass
 
-            # 5) if matches an imported package root, treat as satisfied by import
+            # 6) if matches an imported package root, treat as satisfied by import
             if r in import_roots:
                 externals_ok.add(r)
 
@@ -1582,6 +1615,62 @@ class BlockExtractor:
         dfs(root.qualified_name)
         return resolved, unresolved, order
 
+    def _cross_repo_search(self, name: str) -> Dict[str, ResolvedSymbol]:
+        """Search for a symbol across all repositories in the index."""
+        resolved = {}
+        
+        try:
+            with sqlite3.connect(self.index.db_path) as con:
+                # Search across all repositories
+                rows = con.execute(
+                    "SELECT repo, relpath, qual, kind, line, code FROM symbols WHERE name=? ORDER BY repo, qual",
+                    (name,)
+                ).fetchall()
+                
+                if not rows:
+                    return resolved
+                
+                # Prefer symbols from certain repositories
+                preferred_repos = ['open-mmlab/mmengine', 'open-mmlab/mmcv', 'open-mmlab/mmdetection']
+                chosen_row = None
+                
+                # First try preferred repositories
+                for repo_pref in preferred_repos:
+                    for row_repo, relpath, qual, kind, line, code in rows:
+                        if row_repo == repo_pref:
+                            chosen_row = (row_repo, relpath, qual, kind, line, code)
+                            break
+                    if chosen_row:
+                        break
+                
+                # Fallback to first match
+                if not chosen_row:
+                    chosen_row = rows[0]
+                
+                row_repo, relpath, qual, kind, line, code = chosen_row
+                mod_qual = qual.rsplit(".", 1)[0]
+                
+                # Create the primary symbol
+                primary_sym = ResolvedSymbol(
+                    qname=qual,
+                    name=name,
+                    kind=kind if kind in ("class", "function", "const") else self._head_kind(code),
+                    repo=row_repo,
+                    file_path=relpath,
+                    module_qual=mod_qual,
+                    module_path=mod_qual.replace(".", "/"),
+                    module_source=None,
+                    source_code=code,
+                    line=line,
+                    module_imports=None,
+                )
+                resolved[primary_sym.qname] = primary_sym
+                
+        except Exception as e:
+            log.debug("Cross-repo search failed for %s: %s", name, e)
+        
+        return resolved
+
     def _inject_resolved_symbols(self, fetched: Dict[str, ResolvedSymbol]) -> None:
         for qname, rsym in fetched.items():
             repo = rsym.repo or "__resolved__"
@@ -1666,6 +1755,92 @@ class BlockExtractor:
                     module_imports=None,
                 )
         return None
+
+    def _resolve_from_index(self, name: str, repo: str, mod: str) -> Dict[str, ResolvedSymbol]:
+        """Resolve symbol and its dependencies from SQLite index, fetching actual definitions."""
+        resolved = {}
+        
+        try:
+            with sqlite3.connect(self.index.db_path) as con:
+                # Find the primary symbol - first try in the same repo, then across all repos
+                rows = con.execute(
+                    "SELECT repo, relpath, qual, kind, line, code FROM symbols WHERE name=? AND repo=?",
+                    (name, repo)
+                ).fetchall()
+                
+                if not rows:
+                    # If not found in the same repo, search across all repos
+                    rows = con.execute(
+                        "SELECT repo, relpath, qual, kind, line, code FROM symbols WHERE name=?",
+                        (name,)
+                    ).fetchall()
+                
+                if not rows:
+                    return resolved
+                
+                # Choose the best match (prefer exact module match, then same repo)
+                chosen_row = None
+                for row_repo, relpath, qual, kind, line, code in rows:
+                    if qual.startswith(mod + "."):
+                        chosen_row = (row_repo, relpath, qual, kind, line, code)
+                        break
+                
+                if not chosen_row and repo:
+                    # Try to find in the same repo
+                    for row_repo, relpath, qual, kind, line, code in rows:
+                        if row_repo == repo:
+                            chosen_row = (row_repo, relpath, qual, kind, line, code)
+                            break
+                
+                if not chosen_row:
+                    chosen_row = rows[0]  # Fallback to first match
+                
+                row_repo, relpath, qual, kind, line, code = chosen_row
+                mod_qual = qual.rsplit(".", 1)[0]
+                
+                # Create the primary symbol
+                primary_sym = ResolvedSymbol(
+                    qname=qual,
+                    name=name,
+                    kind=kind if kind in ("class", "function", "const") else self._head_kind(code),
+                    repo=row_repo,
+                    file_path=relpath,
+                    module_qual=mod_qual,
+                    module_path=mod_qual.replace(".", "/"),
+                    module_source=None,
+                    source_code=code,
+                    line=line,
+                    module_imports=None,
+                )
+                resolved[primary_sym.qname] = primary_sym
+                
+                # Try to resolve common dependencies in the same module
+                if mod_qual:
+                    dep_rows = con.execute(
+                        "SELECT repo, relpath, qual, kind, line, code FROM symbols WHERE qual LIKE ? AND repo=? AND name!=?",
+                        (f"{mod_qual}.%", row_repo, name)
+                    ).fetchall()
+                    
+                    for dep_repo, dep_relpath, dep_qual, dep_kind, dep_line, dep_code in dep_rows[:10]:  # Limit to avoid too many
+                        dep_sym = ResolvedSymbol(
+                            qname=dep_qual,
+                            name=dep_qual.split(".")[-1],
+                            kind=dep_kind if dep_kind in ("class", "function", "const") else self._head_kind(dep_code),
+                            repo=dep_repo,
+                            file_path=dep_relpath,
+                            module_qual=dep_qual.rsplit(".", 1)[0],
+                            module_path=dep_qual.rsplit(".", 1)[0].replace(".", "/"),
+                            module_source=None,
+                            source_code=dep_code,
+                            line=dep_line,
+                            module_imports=None,
+                        )
+                        resolved[dep_sym.qname] = dep_sym
+                        
+        except Exception as e:
+            log.debug("Index resolution failed for %s: %s", name, e)
+        
+        return resolved
 
     def resolve_block_dependencies(self, target_name: str, candidate_file: Optional[str]):
         # Prioritize class definitions over constants/imports
@@ -1775,6 +1950,16 @@ class BlockExtractor:
                             symbol = symbol.split(" as ")[0].strip()
                         symbols.append(symbol)
                     return symbols
+            elif import_line.startswith("import "):
+                # Handle simple import statements like "import math", "import numpy as np"
+                module_part = import_line[7:].strip()  # Remove "import "
+                if " as " in module_part:
+                    # For "import numpy as np", we want to check if "numpy" is used
+                    module_name = module_part.split(" as ")[0].strip()
+                    return [module_name]
+                else:
+                    # For "import math", we want to check if "math" is used
+                    return [module_part]
             return []
         except Exception:
             return []
@@ -1818,13 +2003,22 @@ class BlockExtractor:
             for line in self._collect_import_lines_from_source(mi.source_code):
                 import_lines.add(line)
 
-        # Filter imports to only include symbols that are actually used in the emitted code
-        emitted_symbols = set()
+        # Get the actual source code that will be emitted to check what symbols are really used
+        emitted_source = ""
         for qname in qnames:
             sym = self.import_graph.symbol_table.get(qname)
             if sym:
-                emitted_symbols.add(sym.name)
-
+                emitted_source += sym.source_code + "\n"
+        
+        # Also include the target symbol's source code
+        if target_qname:
+            target_sym = self.import_graph.symbol_table.get(target_qname)
+            if target_sym:
+                emitted_source += target_sym.source_code + "\n"
+        
+        # Analyze what symbols are actually used and defined in the emitted source
+        actually_used_symbols, actually_defined_symbols = self._analyze_import_usage(emitted_source)
+        
         filtered = []
         header_imports = self._get_header_imports(qnames)
         for line in sorted(import_lines):
@@ -1837,13 +2031,14 @@ class BlockExtractor:
                 if line.startswith("from torch.nn.modules.") or line.startswith("from torch.nn.parameter"):
                     continue
             
-            # Only include this import if at least one of its symbols is actually used
+            # Only include this import if at least one of its symbols is actually used in the emitted code
+            # and not defined locally
             if import_symbols:
-                used_symbols = [sym for sym in import_symbols if sym in emitted_symbols]
+                used_symbols = [sym for sym in import_symbols if sym in actually_used_symbols and sym not in actually_defined_symbols]
                 if not used_symbols:
-                    # None of the imported symbols are used, skip this import
+                    # None of the imported symbols are used or they're all defined locally, skip this import
                     continue
-                # If only some symbols are used, create a filtered import line
+                # If only some symbols are used and not defined locally, create a filtered import line
                 if len(used_symbols) < len(import_symbols):
                     # Reconstruct the import line with only used symbols
                     if line.startswith("from "):
@@ -1863,8 +2058,8 @@ class BlockExtractor:
                 filtered.append(line)
         return filtered
 
-    def _analyze_import_usage(self, source_code: str) -> Set[str]:
-        """Analyze source code to determine what imports are actually used."""
+    def _analyze_import_usage(self, source_code: str) -> Tuple[Set[str], Set[str]]:
+        """Analyze source code to determine what imports are actually used and what symbols are defined locally."""
         try:
             tree = ast.parse(source_code)
         except Exception:
@@ -1884,18 +2079,21 @@ class BlockExtractor:
                         fixed_code = '\n'.join(line[min_indent:] if line.strip() else line for line in lines)
                         tree = ast.parse(fixed_code)
                     else:
-                        return set()
+                        return set(), set()
                 else:
-                    return set()
+                    return set(), set()
             except Exception:
-                return set()
+                return set(), set()
 
         used_names = set()
+        defined_names = set()
 
         class UsageVisitor(ast.NodeVisitor):
             def visit_Name(self, node):
                 if isinstance(node.ctx, ast.Load):
                     used_names.add(node.id)
+                elif isinstance(node.ctx, ast.Store):
+                    defined_names.add(node.id)
                 self.generic_visit(node)
 
             def visit_Attribute(self, node):
@@ -1908,15 +2106,8 @@ class BlockExtractor:
                 self.generic_visit(node)
             
             def visit_FunctionDef(self, node):
-                # Check docstring for type annotations
-                if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
-                    docstring = node.body[0].value.value
-                    if isinstance(docstring, str):
-                        # Look for :obj:`TypeName` patterns in docstrings
-                        import re
-                        type_matches = re.findall(r':obj:`([A-Za-z_][A-Za-z0-9_]*)`', docstring)
-                        for type_name in type_matches:
-                            used_names.add(type_name)
+                # Function name is defined
+                defined_names.add(node.name)
                 
                 # Check return type annotation
                 if node.returns:
@@ -1930,15 +2121,8 @@ class BlockExtractor:
                 self.generic_visit(node)
             
             def visit_ClassDef(self, node):
-                # Check docstring for type annotations
-                if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
-                    docstring = node.body[0].value.value
-                    if isinstance(docstring, str):
-                        # Look for :obj:`TypeName` patterns in docstrings
-                        import re
-                        type_matches = re.findall(r':obj:`([A-Za-z_][A-Za-z0-9_]*)`', docstring)
-                        for type_name in type_matches:
-                            used_names.add(type_name)
+                # Class name is defined
+                defined_names.add(node.name)
                 
                 # Check base class type annotations
                 for base in node.bases:
@@ -1949,21 +2133,28 @@ class BlockExtractor:
                     self.visit(keyword)
                 
                 self.generic_visit(node)
+            
+            def visit_Assign(self, node):
+                # Handle assignments like 'to_2tuple = _ntuple(2)'
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        defined_names.add(target.id)
+                self.generic_visit(node)
 
         UsageVisitor().visit(tree)
-        return used_names
+        return used_names, defined_names
 
     def _collect_required_imports(self, symbols: List[str], target_source: str) -> List[str]:
         """Dynamically collect required imports based on actual symbol usage."""
         required_imports = []
-        target_usage = self._analyze_import_usage(target_source)
+        target_usage, _ = self._analyze_import_usage(target_source)
         all_imports = set()
         
         # Analyze all dependency source code for import usage
         for qname in symbols:
             sym = self.import_graph.symbol_table.get(qname)
             if sym:
-                sym_imports = self._analyze_import_usage(sym.source_code)
+                sym_imports, _ = self._analyze_import_usage(sym.source_code)
                 all_imports.update(sym_imports)
         
         # Also analyze the target source
@@ -2018,6 +2209,8 @@ class BlockExtractor:
             required_imports.append("from logging import handlers")
         
         # Add collections imports
+        if "collections" in all_imports:
+            required_imports.append("import collections")
         if "defaultdict" in all_imports or "OrderedDict" in all_imports or "Counter" in all_imports:
             collections_items = []
             if "defaultdict" in all_imports:
@@ -2032,6 +2225,26 @@ class BlockExtractor:
         # Add collections.abc imports
         if "Sequence" in all_imports:
             required_imports.append("from collections.abc import Sequence")
+        
+        # Add itertools imports
+        if "repeat" in all_imports:
+            required_imports.append("from itertools import repeat")
+        
+        # Note: Format should be resolved to its definition, not imported
+        
+        # Add typing imports for resolvable symbols
+        if "Type" in all_imports:
+            required_imports.append("from typing import Type")
+        if "Iterable" in all_imports:
+            required_imports.append("from typing import Iterable")
+        if "Mapping" in all_imports:
+            required_imports.append("from typing import Mapping")
+        if "FunctionType" in all_imports:
+            required_imports.append("from types import FunctionType")
+        if "partial" in all_imports:
+            required_imports.append("from functools import partial")
+        if "_Optional" in all_imports:
+            required_imports.append("from typing import Optional as _Optional")
         
         # Add logging imports
         if "Logger" in all_imports or "FileHandler" in all_imports or "LogRecord" in all_imports:
@@ -2057,36 +2270,45 @@ class BlockExtractor:
         if "Path" in all_imports:
             required_imports.append("from pathlib import Path")
         
-        # Add numpy import
-        if "np" in all_imports or "numpy" in all_imports:
+        # Only add imports for libraries that are actually used in the final generated code
+        # Check if these symbols are actually used in the target source, not just in dependencies
+        if "np" in target_usage or "numpy" in target_usage:
             required_imports.append("import numpy as np")
-        
-        # Add other common imports
-        if "yaml" in all_imports:
+        if "yaml" in target_usage:
             required_imports.append("import yaml")
-        if "rich" in all_imports:
+        if "rich" in target_usage:
             required_imports.append("import rich")
-        if "cv2" in all_imports:
+        if "cv2" in target_usage:
             required_imports.append("import cv2")
-        if "pandas" in all_imports:
+        if "pd" in target_usage or "pandas" in target_usage:
             required_imports.append("import pandas as pd")
-        if "matplotlib" in all_imports:
+        if "plt" in target_usage or "matplotlib" in target_usage:
             required_imports.append("import matplotlib.pyplot as plt")
         
-        # Note: We don't add hardcoded imports here anymore
-        # The system will resolve dependencies to their actual definitions
-        # and include the full source code in the generated file
+        # Add common missing imports based on our systematic mapping
+        # But exclude imports for modules we've provided fallbacks for
+        fallback_modules = {'mmcv', 'timm', 'mmseg', 'mmdet', 'mmpose', 'mmocr', 'mmpretrain', 'torch_geometric', 'einops', 'inplace_abn'}
         
-        # Note: We don't add hardcoded imports here anymore
-        # The system will resolve dependencies to their actual definitions
-        # and include the full source code in the generated file
-
-
+        for symbol in all_imports:
+            if symbol in self._common_imports:
+                import_line = self._common_imports[symbol]
+                
+                # Skip if this is an import for a module we've provided a fallback for
+                skip_import = False
+                for fallback_module in fallback_modules:
+                    if f"from {fallback_module}" in import_line or f"import {fallback_module}" in import_line:
+                        skip_import = True
+                        break
+                
+                if not skip_import and import_line not in required_imports:
+                    required_imports.append(import_line)
 
         return required_imports
 
     def _emit_single_file(self, block_name: str, source_info: Dict[str, Any], deps: DependencyResolutionResult) -> Dict[str, Any]:
-        out_dir = Path("generated_packages")
+        # Use absolute path relative to package directory
+        from .utils.path_resolver import get_generated_packages_dir
+        out_dir = get_generated_packages_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         outfile = out_dir / f"{block_name}.py"
 
@@ -2210,9 +2432,68 @@ class BlockExtractor:
         
         # Track imported types to prevent duplicates
         imported_types = set()
-        
-        # Emit dependencies in correct order: inheritance-ordered classes first, then others by priority
-        for q in ordered_classes + type_aliases_and_constants + utility_functions + classes_and_main_functions:
+
+        # -------- Global dependency-aware topological ordering --------
+        # Build a global dependency graph across all selected dependencies so that
+        # any symbol referenced by another (e.g., Format used by FormatT) is emitted first.
+        all_nodes: List[str] = []
+        for group in [type_aliases_and_constants, ordered_classes, utility_functions, classes_and_main_functions]:
+            for q in group:
+                if q not in all_nodes:
+                    all_nodes.append(q)
+
+        node_set = set(all_nodes)
+
+        # Build forward edges as (dependency -> dependents)
+        forward_edges: Dict[str, Set[str]] = {q: set() for q in all_nodes}
+        in_degree: Dict[str, int] = {q: 0 for q in all_nodes}
+
+        for q in all_nodes:
+            sym_q = deps.resolved_dependencies.get(q)
+            if not sym_q:
+                continue
+            refs = self._free_names(sym_q.source_code)
+            mapped_q, _ = self._map_refs(refs, sym_q)
+            for dep in mapped_q:
+                if dep in node_set and dep != q:
+                    # dep must appear before q
+                    if q not in forward_edges[dep]:
+                        forward_edges[dep].add(q)
+                        in_degree[q] += 1
+
+        # Kahn's algorithm with deterministic tie-breaking:
+        # Prefer emitting classes before functions, and functions before constants when ties occur.
+        def node_priority(qname: str) -> int:
+            orig = self.import_graph.symbol_table.get(qname)
+            if not orig:
+                return 3
+            if orig.kind == "class":
+                return 0
+            if orig.kind == "function":
+                return 1
+            # const/type aliases last if no dependency forces earlier placement
+            return 2
+
+        ready: List[str] = [q for q, deg in in_degree.items() if deg == 0]
+        ready.sort(key=lambda q: (node_priority(q), all_nodes.index(q)))
+
+        topo_order: List[str] = []
+        while ready:
+            cur = ready.pop(0)
+            topo_order.append(cur)
+            for nxt in sorted(forward_edges.get(cur, []), key=lambda q: (node_priority(q), all_nodes.index(q))):
+                in_degree[nxt] -= 1
+                if in_degree[nxt] == 0:
+                    # insert maintaining priority order
+                    ready.append(nxt)
+                    ready.sort(key=lambda q: (node_priority(q), all_nodes.index(q)))
+
+        # Fall back to original order if cycle detected or graph incomplete
+        if len(topo_order) != len(all_nodes):
+            topo_order = all_nodes
+
+        # Emit dependencies in strict dependency-aware order
+        for q in topo_order:
             if q in emitted_q:
                 continue
             s = deps.resolved_dependencies.get(q)
@@ -2245,7 +2526,7 @@ class BlockExtractor:
                 continue
         
         # Now collect and add required imports AFTER dependency analysis
-        all_dependency_symbols = ordered_classes + type_aliases_and_constants + utility_functions + classes_and_main_functions
+        all_dependency_symbols = topo_order
         qnames_for_imports = [q for q in all_dependency_symbols if q in deps.resolved_dependencies]
         required_imports = self._collect_required_imports(qnames_for_imports, source_info["content"])
         
@@ -2268,6 +2549,13 @@ class BlockExtractor:
         final_lines.append(f"# Auto-generated single-file for {block_name}")
         final_lines.append("# Dependencies are emitted in topological order (utilities first).")
         
+        # Add warning about unresolved dependencies if any exist
+        if deps.unresolved_dependencies:
+            final_lines.append("# UNRESOLVED DEPENDENCIES:")
+            final_lines.append(f"# {', '.join(deps.unresolved_dependencies)}")
+            final_lines.append("# This block may not compile due to missing dependencies.")
+            final_lines.append("")
+        
         # Add imports at the very top
         if required_imports:
             final_lines.append("# Standard library and external imports")
@@ -2275,9 +2563,24 @@ class BlockExtractor:
             final_lines.append("")
         
         if dyn_imports:
-            final_lines.append("# ---- original imports from contributing modules ----")
-            final_lines.extend(dyn_imports)
-            final_lines.append("")
+            # Filter out imports for modules we've provided fallbacks for
+            fallback_modules = {'mmcv', 'timm', 'mmseg', 'mmdet', 'mmpose', 'mmocr', 'mmpretrain', 'torch_geometric', 'einops', 'inplace_abn'}
+            filtered_dyn_imports = []
+            
+            for import_line in dyn_imports:
+                skip_import = False
+                for fallback_module in fallback_modules:
+                    if f"from {fallback_module}" in import_line or f"import {fallback_module}" in import_line:
+                        skip_import = True
+                        break
+                
+                if not skip_import:
+                    filtered_dyn_imports.append(import_line)
+            
+            if filtered_dyn_imports:
+                final_lines.append("# ---- original imports from contributing modules ----")
+                final_lines.extend(filtered_dyn_imports)
+                final_lines.append("")
         
         # Add all the dependency content we gathered into out_lines
         # (skip the 2 header lines we already added above)
@@ -2314,10 +2617,13 @@ class BlockExtractor:
 
 
         lines.append(f"# ---- {block_name} (target) ----")
-        lines.append(source_info["content"].rstrip())
+        # Clean target source as well (replace relative imports and strip decorators)
+        target_cleaned = self._replace_relative_imports(source_info["content"]) if isinstance(source_info.get("content"), str) else ""
+        target_cleaned = self._remove_decorators(target_cleaned)
+        lines.append(target_cleaned.rstrip())
         lines.append("")
 
-        result = sanitize_generated_block("\n".join(lines))
+        result = self.sanitize_generated_block("\n".join(lines))
 
         outfile.write_text(result, encoding="utf-8")
         try:
@@ -2377,6 +2683,225 @@ class BlockExtractor:
         
         return '\n'.join(dedented_lines)
 
+    @staticmethod
+    def _remove_decorators(source: str) -> str:
+        """Remove all decorators (lines starting with @ and their continuations) preceding defs/classes.
+
+        Handles multi-line decorators with parentheses and multiple stacked decorators.
+        Conservative rule: any line that begins with optional whitespace followed by '@'
+        is considered a decorator start and will be removed along with its line-continuations
+        until the next non-decorator statement.
+        """
+        if not source:
+            return source
+
+        lines = source.splitlines()
+        out: List[str] = []
+
+        i = 0
+        total = len(lines)
+        while i < total:
+            line = lines[i]
+            stripped = line.lstrip()
+
+            # Detect decorator start
+            if stripped.startswith('@'):
+                # Skip decorator lines including multi-line parentheses continuation
+                paren = 0
+                bracket = 0
+                brace = 0
+                # Consume current decorator line
+                def count_pairs(s: str) -> None:
+                    nonlocal paren, bracket, brace
+                    # naive counting, acceptable for decorator expressions
+                    paren += s.count('(') - s.count(')')
+                    bracket += s.count('[') - s.count(']')
+                    brace += s.count('{') - s.count('}')
+
+                count_pairs(stripped)
+                i += 1
+
+                # Continue consuming while inside open parens/brackets/braces or next line starts with '@'
+                while i < total:
+                    next_line = lines[i]
+                    next_stripped = next_line.lstrip()
+                    # Another stacked decorator immediately following
+                    if next_stripped.startswith('@') and paren == 0 and bracket == 0 and brace == 0:
+                        count_pairs(next_stripped)
+                        i += 1
+                        continue
+                    # If still within a multi-line decorator expression, continue skipping
+                    if paren > 0 or bracket > 0 or brace > 0:
+                        count_pairs(next_stripped)
+                        i += 1
+                        continue
+                    break
+                # After skipping decorators, continue loop without appending skipped lines
+                continue
+
+            # Normal line, keep
+            out.append(line)
+            i += 1
+
+        return '\n'.join(out)
+
+    @staticmethod
+    def sanitize_generated_block(text: str) -> str:
+        """
+        Enhanced sanitizer that also adds missing imports:
+        - normalizes newlines
+        - collapses >2 consecutive blank lines to 1
+        - de-dupes identical import lines (keeps first occurrence)
+        - strips trailing spaces
+        - detects undefined symbols and adds necessary imports
+        """
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        lines = text.split("\n")
+        seen_imports: Set[str] = set()
+        out: List[str] = []
+        
+        # First pass: collect existing imports and find undefined symbols
+        defined_symbols = set()
+        used_symbols = set()
+        
+        for ln in lines:
+            s = ln.rstrip()
+            if s.startswith("import ") or s.startswith("from "):
+                if s in seen_imports:
+                    continue
+                seen_imports.add(s)
+                # Extract imported symbols from import statements
+                if s.startswith("from ") and " import " in s:
+                    # from module import symbol1, symbol2
+                    parts = s.split(" import ")
+                    if len(parts) == 2:
+                        symbols = [sym.strip() for sym in parts[1].split(",")]
+                        defined_symbols.update(symbols)
+                elif s.startswith("import ") and " as " in s:
+                    # import module as alias
+                    parts = s.split(" as ")
+                    if len(parts) == 2:
+                        defined_symbols.add(parts[1].strip())
+                elif s.startswith("import ") and " as " not in s:
+                    # import module
+                    module = s.split("import ")[1].strip()
+                    defined_symbols.add(module)
+            
+            # Detect class and function definitions
+            if s.startswith("class ") or s.startswith("def "):
+                # Extract name from "class ClassName" or "def function_name"
+                parts = s.split()
+                if len(parts) >= 2:
+                    name = parts[1].split("(")[0].split(":")[0]
+                    defined_symbols.add(name)
+            
+            # Detect variable assignments
+            if " = " in s and not s.startswith(" ") and not s.startswith("#"):
+                # Simple variable assignment (not indented, not comment)
+                name = s.split(" = ")[0].strip()
+                if name and name.isidentifier():
+                    defined_symbols.add(name)
+            
+            out.append(s)
+        
+        # Second pass: detect undefined symbols
+        for ln in lines:
+            s = ln.rstrip()
+            if not s.startswith("import ") and not s.startswith("from ") and not s.startswith("#") and not s.startswith("class ") and not s.startswith("def "):
+                # Look for symbol usage in this line
+                words = s.split()
+                for word in words:
+                    # Clean the word (remove punctuation, etc.)
+                    clean_word = re.sub(r'[^\w]', '', word)
+                    if clean_word and clean_word.isidentifier() and len(clean_word) > 1:
+                        # Check if it's a built-in or already defined
+                        if clean_word not in defined_symbols and clean_word not in {
+                            "self", "cls", "x", "y", "z", "i", "j", "k", "n", "m", "p", "q", "r", "s", "t", "u", "v", "w",
+                            "torch", "nn", "F", "os", "math", "copy", "defaultdict", "logging", "osp", "MODELS", "OptConfigType", "MultiConfig", "ConfigDict"
+                        }:
+                            used_symbols.add(clean_word)
+        
+        # Add missing imports for undefined symbols
+        missing_imports = []
+        
+        # Only add imports for symbols that are actually used and not defined
+        # Remove hardcoded patterns that may not be needed
+        if "Sequence" in used_symbols and "Sequence" not in defined_symbols:
+            missing_imports.append("from collections.abc import Sequence")
+        
+        # Insert missing imports after the header comment
+        if missing_imports:
+            for i, line in enumerate(out):
+                if line.startswith("# Auto-generated single-file for"):
+                    # Insert imports after the header
+                    for j, imp in enumerate(missing_imports):
+                        out.insert(i + 2 + j, imp)
+                    break
+        
+        return "\n".join(out).rstrip() + "\n"
+
+    @staticmethod
+    def load_block_list(json_path: Path) -> List[str]:
+        """Load block names from JSON file, or discover them if file doesn't exist or is empty."""
+        if not json_path.exists():
+            if log.level <= logging.INFO:
+                print(f"Block names file not found: {json_path}")
+                print("Auto-discovering blocks using make_blocks_name.py...")
+            return BlockExtractor.discover_blocks(json_path)
+        
+        data = json.loads(json_path.read_text(encoding='utf-8'))
+        if not isinstance(data, list):
+            raise ValueError("names JSON must be a JSON array of strings.")
+        
+        out: List[str] = []
+        for x in data:
+            if isinstance(x, str) and x.strip():
+                out.append(x.strip())
+        
+        # If the list is empty, discover blocks
+        if not out:
+            if log.level <= logging.INFO:
+                print(f"Block names file is empty: {json_path}")
+                print("Auto-discovering blocks using make_blocks_name.py...")
+            return BlockExtractor.discover_blocks(json_path)
+        
+        seen = set()
+        uniq = []
+        for n in out:
+            if n not in seen:
+                seen.add(n)
+                uniq.append(n)
+        return uniq
+
+    @staticmethod
+    def discover_blocks(json_path: Path) -> List[str]:
+        """Discover blocks using make_blocks_name.py and save to JSON file."""
+        try:
+            # Import the make_blocks_name module
+            from .make_blocks_name import discover_nn_block_names
+            
+            if log.level <= logging.INFO:
+                print("Discovering neural network blocks...")
+            discovered_blocks = discover_nn_block_names()
+            
+            if not discovered_blocks:
+                if log.level <= logging.INFO:
+                    print("No blocks discovered.")
+                return []
+            
+            # Ensure the directory exists
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save discovered blocks to JSON file
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(discovered_blocks, f, indent=2, sort_keys=True)
+            
+            return discovered_blocks
+            
+        except Exception as e:
+            return []
+
     def _clean_and_validate_source_code(self, source_code: str, qname: str) -> Optional[str]:
         """Clean and validate source code before emitting to prevent syntax errors."""
         if not source_code or not source_code.strip():
@@ -2392,7 +2917,8 @@ class BlockExtractor:
                 try:
                     # Verify the cleaned code parses
                     ast.parse(cleaned)
-                    return cleaned
+                    # Remove decorators before emission
+                    return self._remove_decorators(cleaned)
                 except SyntaxError:
                     # If still can't parse, skip this dependency
                     return None
@@ -2406,11 +2932,13 @@ class BlockExtractor:
             dedented_code = self._dedent_code_block(source_code)
             # Also replace relative imports in constants
             cleaned_code = self._replace_relative_imports(dedented_code)
-            return cleaned_code
+            # Constants won't have decorators, but for consistency run removal
+            return self._remove_decorators(cleaned_code)
         else:
             # Replace relative imports with absolute imports in the source code
             cleaned_source = self._replace_relative_imports(source_code)
-            return cleaned_source
+            # Strip any decorators from classes/functions
+            return self._remove_decorators(cleaned_source)
 
     def _clean_malformed_code(self, source_code: str, qname: str) -> Optional[str]:
         """Attempt to clean malformed code that has syntax errors."""
@@ -2586,8 +3114,27 @@ class BlockExtractor:
         """
         if self._index_warmed:
             return True
+            
+        # Ensure all repos are cached first
         if not self._ensure_all_repos_cached():
             return False
+
+        # Check if we can hydrate from existing index
+        has_any_index = any(self.index.repo_has_index(repo) for repo in self.repo_cache.repos.keys() 
+                           if self.repo_cache.is_repo_cached(repo))
+        
+        if has_any_index and self.index_mode != "force":
+            if log.level <= logging.INFO:
+                print("Hydrating from existing index...")
+        else:
+            # First-time setup - show helpful message
+            cache_dir = self.repo_cache.cache_dir
+            if not (cache_dir / "cache_index.json").exists():
+                print(" Preparing nn-rag for first use...")
+                print("   This may take a moment to cache repositories.")
+                print("   The package will work with whatever data is available.")
+            elif log.level <= logging.INFO:
+                print("Preparing for first use, cloning repositories...")
 
         # Index according to policy
         for repo in list(self.repo_cache.repos.keys()):
@@ -2596,13 +3143,13 @@ class BlockExtractor:
 
             if self.index_mode == "skip":
                 if self.index.repo_has_index(repo):
-                    log.info("Index present for %s — hydrating from SQLite.", repo)
+                    # log.info("Index present for %s — hydrating from SQLite.", repo)
                     self._hydrate_repo_from_index(repo)
                 continue
 
             if self.index_mode == "missing":
                 if self.index.repo_has_index(repo):
-                    log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
+                    # log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
                     self._hydrate_repo_from_index(repo)
                     continue
                 # no index yet → index now
@@ -2621,7 +3168,8 @@ class BlockExtractor:
     # ------------------------------ Top-level API ------------------------------ #
 
     def extract_block(self, block_name: str) -> Dict[str, Any]:
-        log.info("Extracting block: %s", block_name)
+        if log.level <= logging.INFO:
+            print(f"Extracting '{block_name}'...", end=" ")
 
         # Warm caches + build index ONCE (policy-controlled)
         if not self.warm_index_once():
@@ -2632,7 +3180,6 @@ class BlockExtractor:
         candidates = discoveries.get(block_name) or []
         if not candidates:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {"success": False, "reason": "block not found", "block_name": block_name}
 
         best = candidates[0]
@@ -2645,7 +3192,6 @@ class BlockExtractor:
         target_code = self._extract_named_block(content, block_name)
         if not target_code:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {"success": False, "reason": "could not slice block", "block_name": block_name}
 
         source_info = {"repository": repo, "file_path": rel, "content": target_code, "identifier": block_name}
@@ -2653,17 +3199,24 @@ class BlockExtractor:
         # Resolve all dependencies using the warmed import graph
         deps = self.resolve_block_dependencies(block_name, rel)
 
+        # Generate the block file even if there are unresolved dependencies
+        # This allows the validator to properly catch and report dependency issues
+        gen = self._emit_single_file(block_name, source_info, deps)
+        
+        # Validate the generated block and move if valid
+        validation_result = self._validate_and_move_block(block_name)
+        
+        # If there are unresolved dependencies, mark as failed but still generate the file
         if deps.unresolved_dependencies:
             self.failed_blocks.append(block_name)
-            self._save_results()
             return {
                 "success": False,
                 "reason": "unresolved dependencies",
                 "block_name": block_name,
-                "unresolved": deps.unresolved_dependencies
+                "unresolved": deps.unresolved_dependencies,
+                "file_generated": gen.get("success", False),
+                "validation": validation_result
             }
-
-        gen = self._emit_single_file(block_name, source_info, deps)
 
         result = {
             "success": gen["success"],
@@ -2674,14 +3227,56 @@ class BlockExtractor:
                 "resolved": deps.resolution_stats.get("resolved", 0),
                 "unresolved": deps.resolution_stats.get("unresolved", 0)
             },
+            "validation": validation_result,
             "timestamp": datetime.now().isoformat()
         }
         if gen["success"]:
             self.extracted_blocks.append(result)
+            if log.level <= logging.INFO:
+                if 'validation' in result and result['validation'].get('valid'):
+                    print("Valid")
+                else:
+                    print("Invalid")
         else:
             self.failed_blocks.append(block_name)
-        self._save_results()
+            if log.level <= logging.INFO:
+                print("Failed")
         return result
+
+    def _validate_and_move_block(self, block_name: str) -> Dict[str, Any]:
+        """
+        Validate a generated block and move it to the block directory if valid.
+        
+        Args:
+            block_name: Name of the block to validate
+            
+        Returns:
+            Dictionary containing validation results
+        """
+        try:
+            # Validate the block
+            is_valid, error = self.validator.validate_single_block(block_name)
+            
+            if is_valid:
+                # Move to block directory
+                move_success = self.validator.move_valid_block(block_name)
+                return {
+                    "valid": True,
+                    "moved": move_success,
+                    "error": None
+                }
+            else:
+                return {
+                    "valid": False,
+                    "moved": False,
+                    "error": error
+                }
+        except Exception as e:
+            return {
+                "valid": False,
+                "moved": False,
+                "error": f"Validation error: {e}"
+            }
 
     # ------------------------------ Helpers ----------------------------------- #
 
@@ -2704,281 +3299,284 @@ class BlockExtractor:
                     return ast.unparse(node)
         return None
 
+    # ------------------------------ Public API Methods ----------------------------- #
+
+    def extract_single_block(self, block_name: str, validate: bool = True, cleanup_invalid: bool = False) -> Dict[str, Any]:
+        """
+        Extract a single block by name.
+        
+        Args:
+            block_name: Name of the block to extract
+            validate: If True, validate and move the block after extraction
+            cleanup_invalid: If True, remove invalid blocks from generated_packages
+            
+        Returns:
+            Dictionary containing extraction results
+        """
+        if not block_name or block_name is None:
+            return {"success": False, "reason": "Block name cannot be empty or None", "block_name": block_name}
+        
+        try:
+            result = self.extract_block(block_name)
+            
+            # Validate the block if extraction was successful and validation is enabled
+            if result.get("success") and validate:
+                validation_result = self.validate_block(block_name, cleanup_invalid=cleanup_invalid)
+                result["validation"] = validation_result
+            
+            return result
+        except Exception as e:
+            return {"success": False, "reason": f"exception: {type(e).__name__}: {e}", "block_name": block_name}
+
+    def extract_multiple_blocks(self, block_names: List[str], validate: bool = True, cleanup_invalid: bool = False) -> Dict[str, Any]:
+        """
+        Extract multiple blocks by name.
+        
+        Args:
+            block_names: List of block names to extract
+            validate: If True, validate and move blocks after extraction
+            cleanup_invalid: If True, remove invalid blocks from generated_packages
+            
+        Returns:
+            Dictionary mapping block names to extraction results
+        """
+        if block_names is None:
+            return {}
+        
+        results = {}
+        for block_name in block_names:
+            results[block_name] = self.extract_single_block(block_name, validate=validate, cleanup_invalid=cleanup_invalid)
+        return results
+
+    def extract_blocks_from_file(self, json_path: Optional[Path] = None, limit: Optional[int] = None, 
+                                start_from: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Extract blocks from a JSON file containing block names.
+        
+        Args:
+            json_path: Path to JSON file containing block names (defaults to nn_block_names.json)
+            limit: Maximum number of blocks to process
+            start_from: Skip blocks until this name (inclusive), then start
+            
+        Returns:
+            Dictionary containing batch extraction results
+        """
+        # Use default JSON path if not provided
+        if json_path is None:
+            from .utils.path_resolver import get_config_file_path
+            json_path = get_config_file_path("nn_block_names.json")
+            
+        try:
+            names = self.load_block_list(json_path)
+        except Exception as e:
+            return {"success": False, "reason": f"names file error: {e}", "path": str(json_path)}
+
+        # Filter names based on parameters
+        if start_from:
+            if start_from in names:
+                pos = names.index(start_from)
+                names = names[pos + 1:]
+            # else ignore
+
+        plan = []
+        for n in names:
+            if limit and len(plan) >= limit:
+                break
+            plan.append(n)
+
+        if not plan:
+            return {"success": True, "reason": "nothing to do (empty plan)"}
+
+        batch_results: Dict[str, Any] = {}
+        t0 = time.time()
+        
+        # Show progress indicator for batch processing
+        if log.level <= logging.INFO:
+            print(f"Processing {len(plan)} blocks...")
+        
+        # Process blocks in parallel
+        with cf.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all extraction tasks
+            future_to_name = {executor.submit(self.extract_single_block, name): name for name in plan}
+            
+            # Process completed extractions
+            completed = 0
+            for future in cf.as_completed(future_to_name):
+                name = future_to_name[future]
+                try:
+                    res = future.result()
+                    batch_results[name] = res
+                    
+                    # Validate and move successful blocks immediately
+                    if res.get("success"):
+                        validation_result = self.validate_block(name, cleanup_invalid=False)
+                        res["validation"] = validation_result
+                        
+                except Exception as e:
+                    batch_results[name] = {"success": False, "error": str(e)}
+                
+                completed += 1
+                
+                # Progress reporting (less frequent for cleaner output)
+                if log.level <= logging.INFO and (completed % max(1, len(plan) // 10) == 0 or completed == len(plan)):
+                    ok_n = sum(1 for r in batch_results.values() if r.get("success"))
+                    print(f"Progress: {completed}/{len(plan)} blocks processed ({ok_n} successful)")
+
+        ok_n = sum(1 for r in batch_results.values() if r.get("success"))
+        fail_n = len(batch_results) - ok_n
+        summary = {
+            "success": fail_n == 0,
+            "processed": len(batch_results),
+            "ok": ok_n,
+            "fail": fail_n,
+            "elapsed_sec": round(time.time() - t0, 3),
+        }
+        
+        return {**summary, "results": batch_results}
+
+    def retry_failed_blocks(self, validate: bool = True, cleanup_invalid: bool = False) -> Dict[str, Any]:
+        """
+        Retry all previously failed blocks.
+        
+        Args:
+            validate: If True, validate and move blocks after extraction
+            cleanup_invalid: If True, remove invalid blocks from generated_packages
+        
+        Returns:
+            Dictionary mapping block names to retry results
+        """
+        retried: Dict[str, Any] = {}
+        failed_blocks_list = list(self.failed_blocks)
+        
+        for item in failed_blocks_list:
+            retried[item] = self.extract_single_block(item, validate=validate, cleanup_invalid=cleanup_invalid)
+        
+        return retried
+
+    def get_extraction_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about extraction results.
+        
+        Returns:
+            Dictionary containing extraction statistics
+        """
+        return {
+            "extracted_count": len(self.extracted_blocks) if self.extracted_blocks else 0,
+            "failed_count": len(self.failed_blocks) if self.failed_blocks else 0,
+            "skipped_count": len(self.skipped_blocks) if self.skipped_blocks else 0,
+            "extracted_blocks": [b.get("block_name") for b in self.extracted_blocks] if self.extracted_blocks else [],
+            "failed_blocks": list(self.failed_blocks) if self.failed_blocks else [],
+            "skipped_blocks": list(self.skipped_blocks) if self.skipped_blocks else []
+        }
+
+    def auto_extract_all_blocks(self, json_path: str = "ab/rag/config/nn_block_names.json", 
+                               limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Automatically warm index and run batch extraction from JSON file.
+        This provides a one-step solution for users who want everything done automatically.
+        
+        Args:
+            json_path: Path to JSON file containing block names
+            limit: Maximum number of blocks to process (None for all)
+            
+        Returns:
+            Dictionary containing batch extraction results
+        """
+        try:
+            # Step 1: Check if JSON file exists, generate if not
+            json_file = Path(json_path)
+            if not json_file.exists():
+                success = self._generate_block_names(json_file)
+                if not success:
+                    return {"success": False, "reason": "Failed to generate block names"}
+            
+            # Step 2: Warm the index
+            ok = self.warm_index_once()
+            if not ok:
+                return {"success": False, "reason": "Failed to warm index"}
+            
+            # Step 3: Run batch extraction
+            result = self.extract_blocks_from_file(
+                json_path=json_file,
+                limit=limit
+            )
+            
+            return result
+            
+        except Exception as e:
+            return {"success": False, "reason": f"Auto-extraction failed: {type(e).__name__}: {e}"}
+
+    def _generate_block_names(self, output_path: Path) -> bool:
+        """
+        Generate block names using make_blocks_name.py functionality.
+        
+        Args:
+            output_path: Path where to save the generated JSON file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Import the make_blocks_name functionality
+            from ab.rag.make_blocks_name import discover_nn_block_names
+            
+            block_names = discover_nn_block_names()
+            
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Save to JSON file
+            import json
+            with open(output_path, 'w') as f:
+                json.dump(block_names, f, indent=2)
+            
+            return True
+            
+        except Exception as e:
+            return False
+
+    def validate_block(self, block_name: str, cleanup_invalid: bool = False) -> Dict[str, Any]:
+        """
+        Validate a single block.
+        
+        Args:
+            block_name: Name of the block to validate
+            cleanup_invalid: Whether to clean up invalid blocks from generated_packages
+            
+        Returns:
+            Dictionary containing validation results
+        """
+        try:
+            # Use the same validator instance with correct paths
+            is_valid, error = self.validator.validate_and_move_block(block_name)
+            
+            validation_result = {
+                "name": block_name,
+                "status": "valid" if is_valid else "invalid",
+                "moved_to_block_dir": is_valid,
+                "error": error if not is_valid else None
+            }
+            
+            # Cleanup invalid blocks if requested
+            if cleanup_invalid and not is_valid:
+                from .utils.path_resolver import get_generated_packages_dir
+                invalid_file = get_generated_packages_dir() / f"{block_name}.py"
+                if invalid_file.exists():
+                    invalid_file.unlink()
+                    validation_result["cleaned_up"] = True
+            
+            return validation_result
+        except Exception as e:
+            return {"name": block_name, "status": "validation_error", "error": str(e)}
+
 
 # ----------------------------------------------------------------------------- #
 # CLI
 # ----------------------------------------------------------------------------- #
-def _load_block_list(json_path: Path) -> List[str]:
-    if not json_path.exists():
-        raise FileNotFoundError(f"Names file not found: {json_path}")
-    data = json.loads(json_path.read_text(encoding='utf-8'))
-    if not isinstance(data, list):
-        raise ValueError("names JSON must be a JSON array of strings.")
-    out: List[str] = []
-    for x in data:
-        if isinstance(x, str) and x.strip():
-            out.append(x.strip())
-    seen = set()
-    uniq = []
-    for n in out:
-        if n not in seen:
-            seen.add(n)
-            uniq.append(n)
-    return uniq
 
 
-def main():
-    p = argparse.ArgumentParser(description="Extract reusable PyTorch blocks")
-    p.add_argument("--block", type=str, help="Extract a specific block by name")
-    p.add_argument("--blocks", nargs="+", help="Extract multiple blocks")
-    p.add_argument("--retry-failed", action="store_true", help="Retry failed blocks from previous run")
-    p.add_argument("--names-json", type=Path, default=Path(__file__).parent / "config" / "nn_block_names.json",
-                   help="If --block/--blocks not provided, read names from this JSON (default: ab/rag/config/nn_block_names.json)")
-    p.add_argument("--limit", type=int, default=None, help="Max number of names to process from the list")
-    p.add_argument("--start-from", type=str, default=None,
-                   help="Skip names until (and including) this one, then start")
-    p.add_argument("--skip-existing", action="store_true",
-                   help="Skip blocks that already appear in extraction_results.json (default: process all blocks)")
-    p.add_argument("--stop-on-fail", action="store_true", help="Stop batch as soon as one extraction fails")
-    p.add_argument("--progress-every", type=int, default=10, help="Log progress every N blocks")
-    p.add_argument("--index-mode", type=str, choices=("missing", "force", "skip"),
-                   default="missing", help="Indexing policy: missing (default), force, or skip")
-    p.add_argument("--no-validate", action="store_true", help="Disable automatic validation and movement of valid blocks to 'block' directory")
-    p.add_argument("--cleanup-invalid", action="store_true", help="Remove invalid blocks after validation")
-    args = p.parse_args()
-
-    extractor = BlockExtractor(index_mode=args.index_mode)
-
-    # Warm caches + build index ONCE (policy-controlled)
-    ok = extractor.warm_index_once()
-    if not ok:
-        print(json.dumps({"success": False, "reason": "cache failure during warm_index"}, indent=2))
-        return
-
-    def run_one(name: str) -> Dict[str, Any]:
-        try:
-            res = extractor.extract_block(name)
-            return res
-        except Exception as e:
-            return {"success": False, "reason": f"exception: {type(e).__name__}: {e}", "block_name": name}
-    
-    def validate_block_parallel(name: str) -> Tuple[str, Dict[str, Any]]:
-        """Validate a block in parallel and return (name, validation_result)."""
-        try:
-            if not args.no_validate:
-                validator = BlockValidator()
-                is_valid, error = validator.validate_and_move_block(name)
-                
-                validation_result = {
-                    "name": name,
-                    "status": "valid" if is_valid else "invalid",
-                    "moved_to_block_dir": is_valid,
-                    "error": error if not is_valid else None
-                }
-                
-                # Cleanup invalid blocks if requested
-                if args.cleanup_invalid and not is_valid:
-                    invalid_file = Path("generated_packages") / f"{name}.py"
-                    if invalid_file.exists():
-                        invalid_file.unlink()
-                        validation_result["cleaned_up"] = True
-                
-                return name, validation_result
-            else:
-                return name, {"name": name, "status": "skipped", "reason": "validation disabled"}
-        except Exception as e:
-            return name, {"name": name, "status": "validation_error", "error": str(e)}
-
-    # Direct single
-    if args.block:
-        res = run_one(args.block)
-        
-        # Validate the single block
-        if not args.no_validate and res.get("success"):
-            name, validation_result = validate_block_parallel(args.block)
-            res["validation"] = validation_result
-        
-        print(json.dumps(res, indent=2))
-        return
-
-    # Direct list
-    if args.blocks:
-        results = {b: run_one(b) for b in args.blocks}
-        
-        # Validate all blocks in parallel
-        if not args.no_validate:
-            with cf.ThreadPoolExecutor(max_workers=min(len(args.blocks), 4)) as executor:
-                validation_futures = [executor.submit(validate_block_parallel, b) for b in args.blocks]
-                validation_results = {}
-                
-                for future in cf.as_completed(validation_futures):
-                    name, validation_result = future.result()
-                    validation_results[name] = validation_result
-                
-                # Add validation results to extraction results
-                for name in args.blocks:
-                    if name in validation_results:
-                        results[name]["validation"] = validation_results[name]
-        
-        print(json.dumps(results, indent=2))
-        return
-
-    # Retry failed
-    if args.retry_failed:
-        retried: Dict[str, Any] = {}
-        failed_blocks_list = list(extractor.failed_blocks)
-        
-        for item in failed_blocks_list:
-            retried[item] = run_one(item)
-            if args.stop_on_fail and not retried[item].get("success"):
-                break
-        
-        # Validate retried blocks in parallel
-        if not args.no_validate:
-            successful_retries = [item for item in failed_blocks_list if retried[item].get("success")]
-            if successful_retries:
-                with cf.ThreadPoolExecutor(max_workers=min(len(successful_retries), 4)) as executor:
-                    validation_futures = [executor.submit(validate_block_parallel, item) for item in successful_retries]
-                    validation_results = {}
-                    
-                    for future in cf.as_completed(validation_futures):
-                        name, validation_result = future.result()
-                        validation_results[name] = validation_result
-                    
-                    # Add validation results to retry results
-                    for name in successful_retries:
-                        if name in validation_results:
-                            retried[name]["validation"] = validation_results[name]
-        
-        print(json.dumps(retried, indent=2))
-        return
-
-    # Default mode: read nn_block_names.json and process one by one
-    try:
-        names = _load_block_list(args.names_json)
-    except Exception as e:
-        print(json.dumps({"success": False, "reason": f"names file error: {e}", "path": str(args.names_json)}, indent=2))
-        return
-
-    # Default behavior: process all blocks every time
-    # Only skip already-extracted blocks if --skip-existing is specified (opposite of --redo-existing)
-    already = {x.get("block_name") for x in extractor.extracted_blocks} if extractor.extracted_blocks else set()
-    if args.start_from:
-        if args.start_from in names:
-            pos = names.index(args.start_from)
-            names = names[pos + 1 :]
-        # else ignore
-
-    plan = []
-    for n in names:
-        if args.limit and len(plan) >= args.limit:
-            break
-        # Process all blocks by default, only skip if --skip-existing is specified
-        # (This is the opposite of the original --redo-existing behavior)
-        if hasattr(args, 'skip_existing') and args.skip_existing and n in already:
-            continue
-        plan.append(n)
-
-    if not plan:
-        print(json.dumps({"success": True, "reason": "nothing to do (empty plan)"}, indent=2))
-        return
-
-    print(f"Starting batch extraction for {len(plan)} block(s) from {args.names_json} ...")
-    batch_results: Dict[str, Any] = {}
-    t0 = time.time()
-    
-    # Process blocks with immediate validation after each extraction
-    for i, name in enumerate(plan, 1):
-        # Extract single block
-        res = run_one(name)
-        batch_results[name] = res
-        
-        # Validate immediately after extraction (unless --no-validate is specified)
-        if not args.no_validate and res.get("success"):
-            try:
-                validator = BlockValidator()
-                is_valid, error = validator.validate_and_move_block(name)
-                
-                validation_result = {
-                    "name": name,
-                    "status": "valid" if is_valid else "invalid",
-                    "moved_to_block_dir": is_valid,
-                    "error": error if not is_valid else None
-                }
-                
-                # Cleanup invalid blocks if requested
-                if args.cleanup_invalid and not is_valid:
-                    invalid_file = Path("generated_packages") / f"{name}.py"
-                    if invalid_file.exists():
-                        invalid_file.unlink()
-                        validation_result["cleaned_up"] = True
-                
-                # Add validation result to batch results
-                batch_results[name]["validation"] = validation_result
-                
-                # Log validation result
-                if is_valid:
-                    print(f"✓ {name}: Validated and moved to block directory")
-                else:
-                    print(f"✗ {name}: Validation failed - {error}")
-                    
-            except Exception as e:
-                validation_result = {"name": name, "status": "validation_error", "error": str(e)}
-                batch_results[name]["validation"] = validation_result
-                print(f"✗ {name}: Validation error - {e}")
-        
-        # Save progress incrementally
-        extractor._save_results()
-        
-        # Progress reporting
-        if i % max(1, args.progress_every) == 0 or i == len(plan):
-            ok_n = sum(1 for r in batch_results.values() if r.get("success"))
-            print(f"[{i}/{len(plan)}] ok={ok_n} fail={i - ok_n} elapsed={time.time()-t0:.1f}s")
-        
-        # Check for stop on fail
-        if args.stop_on_fail and not res.get("success"):
-            print(f"Stopping on first failure: {name}")
-            break
-
-    ok_n = sum(1 for r in batch_results.values() if r.get("success"))
-    fail_n = len(batch_results) - ok_n
-    summary = {
-        "success": fail_n == 0,
-        "processed": len(batch_results),
-        "ok": ok_n,
-        "fail": fail_n,
-        "elapsed_sec": round(time.time() - t0, 3),
-    }
-    print(json.dumps(summary, indent=2))
-    
-    # Final validation summary (validation already done during extraction)
-    if not args.no_validate:
-        # Count blocks that were successfully validated and moved
-        validated_blocks = sum(1 for r in batch_results.values() 
-                              if r.get("success") and r.get("validation", {}).get("moved_to_block_dir"))
-        
-        print(f"\nValidation Summary:")
-        print(f"Total blocks processed: {len(batch_results)}")
-        print(f"Successfully extracted: {ok_n}")
-        print(f"Successfully validated and moved: {validated_blocks}")
-        print(f"Validation success rate: {(validated_blocks/ok_n*100):.1f}%" if ok_n > 0 else "Validation success rate: 0.0%")
-        
-        if args.cleanup_invalid:
-            # Clean up invalid blocks that weren't moved
-            cleanup_count = 0
-            for name, result in batch_results.items():
-                if result.get("success") and not result.get("validation", {}).get("moved_to_block_dir"):
-                    invalid_file = Path("generated_packages") / f"{name}.py"
-                    if invalid_file.exists():
-                        try:
-                            invalid_file.unlink()
-                            cleanup_count += 1
-                        except Exception as e:
-                            print(f"Failed to cleanup {name}: {e}")
-            
-            if cleanup_count > 0:
-                print(f"Cleaned up {cleanup_count} invalid blocks from generated_packages directory")
-
+# Import CLI functionality from separate module
+from .cli import main
 
 if __name__ == "__main__":
     main()

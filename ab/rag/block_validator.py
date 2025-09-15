@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class BlockValidator:
     """Validates generated Python blocks and moves valid ones to a 'block' directory."""
     
-    def __init__(self, generated_dir: str = "generated_packages", block_dir: str = "block"):
+    def __init__(self, generated_dir: str = "ab/rag/generated_packages", block_dir: str = "block"):
         """
         Initialize the BlockValidator.
         
@@ -37,12 +37,12 @@ class BlockValidator:
         """Ensure both generated and block directories exist."""
         self.generated_dir.mkdir(exist_ok=True)
         self.block_dir.mkdir(exist_ok=True)
-        logger.info(f"Generated directory: {self.generated_dir}")
-        logger.info(f"Block directory: {self.block_dir}")
+        # logger.info(f"Generated directory: {self.generated_dir}")
+        # logger.info(f"Block directory: {self.block_dir}")
     
     def validate_single_block(self, block_name: str) -> Tuple[bool, Optional[str]]:
         """
-        Validate a single block by checking if it compiles.
+        Validate a single block by actually executing it to see if it works.
         
         Args:
             block_name: Name of the block to validate (without .py extension)
@@ -52,7 +52,12 @@ class BlockValidator:
         """
         block_file = self.generated_dir / f"{block_name}.py"
         
+        # Check if file exists in generated directory
         if not block_file.exists():
+            # Check if file already exists in block directory (already validated)
+            block_target = self.block_dir / f"{block_name}.py"
+            if block_target.exists():
+                return True, "Block already validated and moved to block directory"
             return False, f"Block file {block_file} does not exist"
         
         try:
@@ -70,21 +75,59 @@ class BlockValidator:
             except SyntaxError as e:
                 return False, f"Syntax error: {e}"
             
-            # Try to compile the code
+            # Try to compile the code first (syntax check)
             try:
                 compile(content, str(block_file), 'exec')
             except Exception as e:
                 return False, f"Compilation error: {e}"
             
-            # Additional validation: check for basic Python structure
-            if not self._has_valid_structure(content):
-                return False, "Block lacks valid Python structure (no classes/functions)"
-            
-            return True, None
+            # Actually execute the code to see if it works
+            try:
+                # Create a safe execution environment
+                exec_namespace = {
+                    '__builtins__': __builtins__,
+                }
+                
+                # Set up environment variables that might be needed
+                import os
+                original_env = os.environ.copy()
+                try:
+                    # Set common environment variables that might be referenced
+                    os.environ.setdefault('TIMM_FUSED_ATTN', '0')
+                    exec(content, exec_namespace)
+                finally:
+                    # Restore original environment
+                    os.environ.clear()
+                    os.environ.update(original_env)
+                
+                # If we get here, the code executed successfully
+                return True, None
+
+            except NameError as e:
+                # Extract the undefined name from the error message
+                import re
+                name_match = re.search(r"'([^']+)' is not defined", str(e))
+                if name_match:
+                    undefined_name = name_match.group(1)
+                    return False, f"Unresolved dependency: '{undefined_name}' is not defined (missing import)"
+                return False, f"NameError: {e}"
+            except ModuleNotFoundError as e:
+                # Handle missing external modules more gracefully
+                import re
+                module_match = re.search(r"No module named '([^']+)'", str(e))
+                if module_match:
+                    module_name = module_match.group(1)
+                    return False, f"Missing external module: '{module_name}' is not installed"
+                return False, f"ModuleNotFoundError: {e}"
+            except Exception as e:
+                # Any other error means the block is invalid
+                return False, f"Execution error: {e}"
             
         except Exception as e:
             return False, f"Validation error: {e}"
     
+
+
     def _has_valid_structure(self, content: str) -> bool:
         """
         Check if the content has valid Python structure.
@@ -125,9 +168,17 @@ class BlockValidator:
         target_file = self.block_dir / f"{block_name}.py"
         
         try:
+            # Check if target already exists (already moved)
+            if target_file.exists():
+                return True
+            
+            # Check if source exists
+            if not source_file.exists():
+                return False
+                
             # Move the file to block directory (not copy)
             shutil.move(str(source_file), str(target_file))
-            logger.info(f"Successfully moved {block_name} to block directory")
+            # logger.info(f"Successfully moved {block_name} to block directory")
             return True
         except Exception as e:
             logger.error(f"Failed to move {block_name}: {e}")
@@ -164,13 +215,13 @@ class BlockValidator:
         
         for py_file in self.generated_dir.glob("*.py"):
             block_name = py_file.stem
-            logger.info(f"Validating block: {block_name}")
+            # logger.info(f"Validating block: {block_name}")
             
             is_valid, error = self.validate_and_move_block(block_name)
             results[block_name] = (is_valid, error)
             
             if is_valid:
-                logger.info(f"✓ {block_name}: Valid and moved to block directory")
+                pass  # Valid and moved to block directory
             else:
                 logger.warning(f"✗ {block_name}: {error}")
         
@@ -214,7 +265,7 @@ class BlockValidator:
                 block_file = self.generated_dir / f"{block_name}.py"
                 try:
                     block_file.unlink()
-                    logger.info(f"Removed invalid block: {block_name}")
+                    # logger.info(f"Removed invalid block: {block_name}")
                     removed_count += 1
                 except Exception as e:
                     logger.error(f"Failed to remove invalid block {block_name}: {e}")
@@ -227,7 +278,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Validate generated Python blocks")
-    parser.add_argument("--generated-dir", default="generated_packages", 
+    parser.add_argument("--generated-dir", default="ab/rag/generated_packages", 
                        help="Directory containing generated packages")
     parser.add_argument("--block-dir", default="block", 
                        help="Directory where valid blocks will be moved")
@@ -247,7 +298,6 @@ def main():
     print(f"Total blocks: {summary['total']}")
     print(f"Valid blocks: {summary['valid']}")
     print(f"Invalid blocks: {summary['invalid']}")
-    print(f"Success rate: {summary['success_rate']:.1f}%")
     
     # Cleanup if requested
     if args.cleanup:

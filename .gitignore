@@ -36,7 +36,8 @@ external/
 repo_cache/
 
 # Generated packages and output
-generated_packages/
+ab/rag/generated_packages/
+block/
 output/
 extraction_results.json
 compile_report.json
@@ -72,6 +73,12 @@ logs/
 *.temp
 temp/
 tmp/
+
+# Build artifacts and pip output
+=*
+*.egg-info/
+build/
+dist/
 
 # OS generated files
 .DS_Store
@@ -135,7 +142,9 @@ checkpoints/
 # ab/rag/config/block_names.json
 # ab/rag/config/nn_block_names.json
 
-block/
-=0.23.6
 .venv/
-=1.7.0
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+ab/rag/utils/symbol_index.db

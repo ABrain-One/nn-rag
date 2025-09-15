@@ -30,3 +30,56 @@ Install the latest version directly from GitHub:
 
 ```bash
 pip install git+https://github.com/ABrain-One/nn-rag --upgrade
+```
+
+## Usage
+
+### Command Line Interface
+
+The package provides a command-line interface for extracting neural network blocks:
+
+```bash
+# Correct way to run (recommended)
+python3 -m ab.rag --help
+
+# Extract a specific block
+python3 -m ab.rag --block ResNet
+
+# Extract multiple blocks
+python3 -m ab.rag --blocks ResNet VGG DenseNet
+
+# Extract from JSON file (default)
+python3 -m ab.rag
+
+# Note: Avoid running 'python3 -m ab.rag.extract_blocks' as it may show warnings
+```
+
+### Python API
+
+```python
+from ab.rag import BlockExtractor, BlockValidator
+
+# Initialize extractor
+extractor = BlockExtractor()
+
+# Warm up the index (clones repos and indexes if needed)
+extractor.warm_index_once()
+
+# Extract a single block
+result = extractor.extract_single_block("ResNet")
+
+# Extract multiple blocks
+results = extractor.extract_multiple_blocks(["ResNet", "VGG"])
+
+# Extract from JSON file (uses default nn_block_names.json)
+results = extractor.extract_blocks_from_file()
+
+# Extract with limit
+results = extractor.extract_blocks_from_file(limit=10)
+
+# Extract with custom JSON file
+results = extractor.extract_blocks_from_file("custom_blocks.json")
+
+# Extract with start_from parameter
+results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
+```
