@@ -61,9 +61,12 @@ def _repo_root_from_cache(cache, repo_name: str) -> Optional[Path]:
 def _guess_local_repo_root(repo_name: str) -> Optional[Path]:
     owner, name = repo_name.split("/", 1)
     # Get the script's directory to make paths relative to it
+    from .utils.path_resolver import get_cache_dir
     script_dir = Path(__file__).parent
+    cache_dir = get_cache_dir()
     candidates = [
-        script_dir / "repo_cache" / f"{owner}_{name}",  # Default repo cache location relative to script
+        cache_dir / "repo_cache" / f"{owner}_{name}",  # Default repo cache location
+        script_dir / "repo_cache" / f"{owner}_{name}",  # Fallback: relative to script
         Path("ab/rag/repo_cache") / f"{owner}_{name}",  # Fallback: relative to current working directory
         Path("repos") / owner / name,
         Path(".cache") / "repos" / owner / name,
@@ -307,8 +310,9 @@ def build_nn_block_names(
 
 def main():
     ap = argparse.ArgumentParser(description="Create a JSON array of neural network block names from configured repos.")
-    ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config" / "repo_config.json", help="Path to repo_config.json")
-    ap.add_argument("--out", type=Path, default=Path(__file__).parent / "config" / "nn_block_names.json", help="Path to output JSON array")
+    from .utils.path_resolver import get_config_file_path
+    ap.add_argument("--config", type=Path, default=get_config_file_path("repo_config.json"), help="Path to repo_config.json")
+    ap.add_argument("--out", type=Path, default=get_config_file_path("nn_block_names.json"), help="Path to output JSON array")
     ap.add_argument("--include-registered", action="store_true",
                     help="(Deprecated) Registry decorators no longer sufficient - Module inheritance required")
     ap.add_argument("--allow-patterns", nargs="*", default=[],
@@ -350,7 +354,8 @@ def main():
 
 def discover_nn_block_names() -> List[str]:
     """Discover neural network block names with sensible defaults for auto-discovery."""
-    config_path = Path(__file__).parent / "config" / "repo_config.json"
+    from .utils.path_resolver import get_config_file_path
+    config_path = get_config_file_path("repo_config.json")
     
     return build_nn_block_names(
         config_path=config_path,

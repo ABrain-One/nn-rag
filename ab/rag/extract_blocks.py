@@ -73,10 +73,10 @@ class BlockExtractor:
           - "skip": never index (assume index is prebuilt)
         """
         # Initialize repo cache with package-local cache directory
-        # Always use the source directory for cache
-        package_dir = Path(__file__).parent
-            
-        package_cache_dir = package_dir / ".cache"
+        from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path
+        
+        package_dir = get_package_root()
+        package_cache_dir = get_cache_dir()
         self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
@@ -90,11 +90,11 @@ class BlockExtractor:
         self.skipped_blocks: List[str] = []
 
         # Initialize index with package-local database
-        package_index_db = package_dir / ".cache" / "index.db"
+        package_index_db = package_cache_dir / "index.db"
         self.index = FileIndexStore(db_path=package_index_db)
         # Initialize validator with absolute paths
-        generated_dir = package_dir / "generated_packages"
-        block_dir = package_dir.parent.parent / "blocks"  # block directory is at project root
+        generated_dir = get_generated_packages_dir()
+        block_dir = get_blocks_dir()
         self.validator = BlockValidator(
             generated_dir=str(generated_dir),
             block_dir=str(block_dir)
@@ -660,7 +660,8 @@ class BlockExtractor:
 
     def _ensure_all_repos_cached(self) -> bool:
         try:
-            cfg = json.loads((Path(__file__).parent / "config" / "repo_config.json").read_text())
+            from .utils.path_resolver import get_config_file_path
+            cfg = json.loads(get_config_file_path("repo_config.json").read_text())
         except FileNotFoundError:
             log.error("repo_config.json not found.")
             return False
@@ -2195,8 +2196,8 @@ class BlockExtractor:
 
     def _emit_single_file(self, block_name: str, source_info: Dict[str, Any], deps: DependencyResolutionResult) -> Dict[str, Any]:
         # Use absolute path relative to package directory
-        package_dir = Path(__file__).parent
-        out_dir = package_dir / "generated_packages"
+        from .utils.path_resolver import get_generated_packages_dir
+        out_dir = get_generated_packages_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         outfile = out_dir / f"{block_name}.py"
 
@@ -3236,7 +3237,8 @@ class BlockExtractor:
         """
         # Use default JSON path if not provided
         if json_path is None:
-            json_path = Path(__file__).parent / "config" / "nn_block_names.json"
+            from .utils.path_resolver import get_config_file_path
+            json_path = get_config_file_path("nn_block_names.json")
             
         try:
             names = self.load_block_list(json_path)
@@ -3427,8 +3429,8 @@ class BlockExtractor:
             
             # Cleanup invalid blocks if requested
             if cleanup_invalid and not is_valid:
-                package_dir = Path(__file__).parent
-                invalid_file = package_dir / "generated_packages" / f"{block_name}.py"
+                from .utils.path_resolver import get_generated_packages_dir
+                invalid_file = get_generated_packages_dir() / f"{block_name}.py"
                 if invalid_file.exists():
                     invalid_file.unlink()
                     validation_result["cleaned_up"] = True

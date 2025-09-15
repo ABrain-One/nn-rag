@@ -61,11 +61,13 @@ class RepoCache:
         max_file_mb: int = DEFAULT_MAX_FILE_MB,
         extra_skip_exts: Optional[List[str]] = None,
     ):
-        # Set default paths relative to the workspace root
+        # Set default paths using the path resolver
         if cache_dir is None:
-            cache_dir = ".cache/repo_cache"
+            from .path_resolver import get_cache_dir
+            cache_dir = str(get_cache_dir() / "repo_cache")
         if config_file is None:
-            config_file = str(Path(__file__).parent.parent / "config" / "repo_config.json")
+            from .path_resolver import get_config_file_path
+            config_file = str(get_config_file_path("repo_config.json"))
             
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

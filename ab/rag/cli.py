@@ -17,7 +17,8 @@ def main():
     p.add_argument("--block", type=str, help="Extract a specific block by name")
     p.add_argument("--blocks", nargs="+", help="Extract multiple blocks")
     p.add_argument("--retry-failed", action="store_true", help="Retry failed blocks from previous run")
-    p.add_argument("--names-json", type=Path, default=Path(__file__).parent / "config" / "nn_block_names.json",
+    from .utils.path_resolver import get_config_file_path
+    p.add_argument("--names-json", type=Path, default=get_config_file_path("nn_block_names.json"),
                    help="If --block/--blocks not provided, read names from this JSON (default: ab/rag/config/nn_block_names.json)")
     p.add_argument("--limit", type=int, default=None, help="Max number of names to process from the list")
     p.add_argument("--start-from", type=str, default=None,
