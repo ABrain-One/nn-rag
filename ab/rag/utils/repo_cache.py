@@ -71,6 +71,10 @@ class RepoCache:
             
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure repo_cache subdirectory exists
+        self.repo_cache_dir = self.cache_dir / "repo_cache"
+        self.repo_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.cache_index_file = self.cache_dir / "cache_index.json"
         self.config_file = Path(config_file)
@@ -185,9 +189,18 @@ class RepoCache:
         """
         Ensure repo is present locally. By default, will NOT update an existing repo.
         """
-        if self.is_repo_cached(repo_name):
-            return self.get_cached_repo(repo_name)
-        return self._update_repo_cache(repo_name)
+        try:
+            if self.is_repo_cached(repo_name):
+                return self.get_cached_repo(repo_name)
+            return self._update_repo_cache(repo_name)
+        except Exception as e:
+            # If there's any error, ensure the cache directory exists and try again
+            self.repo_cache_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                return self._update_repo_cache(repo_name)
+            except Exception:
+                # If still fails, return None to indicate the repo is not available
+                return None
 
     def update_repo(self, repo_name: str, policy: Optional[str] = None) -> Optional[Path]:
         """
@@ -240,7 +253,7 @@ class RepoCache:
         if not cfg:
             return None
 
-        repo_path = self.cache_dir / repo_name.replace("/", "_")
+        repo_path = self.repo_cache_dir / repo_name.replace("/", "_")
         url = cfg.get("url")
         if not url:
             return None

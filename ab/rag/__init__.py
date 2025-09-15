@@ -14,11 +14,14 @@ from .block_validator import BlockValidator
 # Post-install setup - this runs when the package is imported
 def _setup_package_data():
     """Setup package data on first import if not already done."""
-    from .utils.path_resolver import get_package_root, get_cache_dir, ensure_package_data_exists
+    from .utils.path_resolver import get_package_root, get_cache_dir, ensure_package_data_exists, ensure_cache_structure
     
     package_dir = get_package_root()
     cache_dir = get_cache_dir()
     index_db = cache_dir / "index.db"
+    
+    # Ensure cache structure exists
+    ensure_cache_structure()
     
     # Check if package data is already set up
     if cache_dir.exists() and index_db.exists():

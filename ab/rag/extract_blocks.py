@@ -665,11 +665,17 @@ class BlockExtractor:
         except FileNotFoundError:
             log.error("repo_config.json not found.")
             return False
+        
+        # Ensure the cache directory structure exists
+        self.repo_cache.repo_cache_dir.mkdir(parents=True, exist_ok=True)
+        
         for name in cfg.keys():
             try:
                 if not self.repo_cache.is_repo_cached(name):
                     # If RepoCache attempts pull & fails, it should raise; we deliberately continue.
-                    self.repo_cache.ensure_repo_cached(name)
+                    result = self.repo_cache.ensure_repo_cached(name)
+                    if result is None:
+                        log.warning("Could not cache repository %s (will skip)", name)
             except Exception as e:
                 log.warning("Cache failed for %s (continuing with whatever is present): %s", name, e)
         return True

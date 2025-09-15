@@ -45,6 +45,23 @@ def get_cache_dir() -> Path:
     return cache_dir
 
 
+def ensure_cache_structure() -> bool:
+    """
+    Ensure the complete cache directory structure exists.
+    
+    Returns:
+        True if the structure was created successfully
+    """
+    try:
+        cache_dir = get_cache_dir()
+        repo_cache_dir = cache_dir / "repo_cache"
+        repo_cache_dir.mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception as e:
+        print(f"Warning: Could not create cache structure: {e}")
+        return False
+
+
 def get_config_file_path(filename: str) -> Path:
     """
     Get the full path to a configuration file.
