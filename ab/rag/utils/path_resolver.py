@@ -148,7 +148,7 @@ def get_development_root() -> Optional[Path]:
     potential_root = current_file.parent.parent.parent
     
     # Look for development indicators
-    if (potential_root / "setup.py").exists() and (potential_root / "pyproject.toml").exists():
+    if (potential_root / "setup.py").exists() or (potential_root / "pyproject.toml").exists():
         return potential_root
     
     return None
