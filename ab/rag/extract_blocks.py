@@ -730,31 +730,14 @@ class BlockExtractor:
             if not success:
                 failed_repos.add(name)
         
-        # Handle failed repositories - only show warnings for actual problems, not first-time setup
+        # Handle failed repositories - only show warnings in verbose mode
         if failed_repos and not self._cache_warning_shown:
-            # Check if this is first-time setup (no cache directory exists)
-            cache_dir = self.repo_cache.cache_dir
-            is_first_time = not (cache_dir / "cache_index.json").exists()
-            
-            if is_first_time:
-                # First-time setup - be completely silent about cache failures
-                # The user will see the friendly setup message instead
-                pass
-            else:
-                # Not first-time setup - show warnings for actual problems
-                if log.level <= logging.INFO:
-                    # In verbose mode, show details
-                    log.warning("Could not cache %d repositories after %d attempts: %s", 
-                               len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
-                else:
-                    # In non-verbose mode, provide helpful guidance
-                    if len(failed_repos) == len(cfg.keys()):
-                        print("⚠️  Could not cache any repositories after retrying.")
-                        print("   This may be due to network issues or Git not being available.")
-                        print("   The package will work with limited data. Use verbose=True for details.")
-                    elif len(failed_repos) > 0:
-                        print(f"⚠️  Could not cache {len(failed_repos)} repositories after retrying.")
-                        print("   The package will work with available data. Use verbose=True for details.")
+            if log.level <= logging.INFO:
+                # In verbose mode, show details
+                log.warning("Could not cache %d repositories after %d attempts: %s", 
+                           len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
+            # In non-verbose mode, be completely silent about cache failures
+            # The package will work with whatever data is available
             
             # Mark warning as shown to avoid repetition
             self._cache_warning_shown = True
@@ -3147,7 +3130,7 @@ class BlockExtractor:
             # First-time setup - show helpful message
             cache_dir = self.repo_cache.cache_dir
             if not (cache_dir / "cache_index.json").exists():
-                print("🚀 Preparing nn-rag for first use...")
+                print(" Preparing nn-rag for first use...")
                 print("   This may take a moment to cache repositories.")
                 print("   The package will work with whatever data is available.")
             elif log.level <= logging.INFO:
