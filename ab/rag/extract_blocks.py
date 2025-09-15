@@ -108,6 +108,14 @@ class BlockExtractor:
         self.extracted_blocks: List[Dict[str, Any]] = []
         self.failed_blocks: List[str] = []
         self.skipped_blocks: List[str] = []
+        
+        # Track warning state to avoid repetitive messages
+        self._cache_warning_shown = False
+        self._repos_cached_this_session = False
+        
+        # Class-level flag to prevent warnings across all instances
+        if not hasattr(BlockExtractor, '_global_cache_warning_shown'):
+            BlockExtractor._global_cache_warning_shown = False
 
         # Initialize index with package-local database
         package_index_db = package_cache_dir / "index.db"
@@ -679,6 +687,10 @@ class BlockExtractor:
     # ------------------------------ Discovery --------------------------------- #
 
     def _ensure_all_repos_cached(self) -> bool:
+        # If we've already cached repos in this session, skip the warning
+        if self._repos_cached_this_session:
+            return True
+            
         try:
             from .utils.path_resolver import get_config_file_path
             cfg = json.loads(get_config_file_path("repo_config.json").read_text())
@@ -718,21 +730,37 @@ class BlockExtractor:
             if not success:
                 failed_repos.add(name)
         
-        # Handle failed repositories with better guidance
-        if failed_repos:
-            if log.level <= logging.INFO:
-                # In verbose mode, show details
-                log.warning("Could not cache %d repositories after %d attempts: %s", 
-                           len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
+        # Handle failed repositories - only show warnings for actual problems, not first-time setup
+        if failed_repos and not self._cache_warning_shown:
+            # Check if this is first-time setup (no cache directory exists)
+            cache_dir = self.repo_cache.cache_dir
+            is_first_time = not (cache_dir / "cache_index.json").exists()
+            
+            if is_first_time:
+                # First-time setup - be completely silent about cache failures
+                # The user will see the friendly setup message instead
+                pass
             else:
-                # In non-verbose mode, provide helpful guidance
-                if len(failed_repos) == len(cfg.keys()):
-                    print("⚠️  Could not cache any repositories after retrying.")
-                    print("   This may be due to network issues or Git not being available.")
-                    print("   The package will work with limited data. Use verbose=True for details.")
-                elif len(failed_repos) > 0:
-                    print(f"⚠️  Could not cache {len(failed_repos)} repositories after retrying.")
-                    print("   The package will work with available data. Use verbose=True for details.")
+                # Not first-time setup - show warnings for actual problems
+                if log.level <= logging.INFO:
+                    # In verbose mode, show details
+                    log.warning("Could not cache %d repositories after %d attempts: %s", 
+                               len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
+                else:
+                    # In non-verbose mode, provide helpful guidance
+                    if len(failed_repos) == len(cfg.keys()):
+                        print("⚠️  Could not cache any repositories after retrying.")
+                        print("   This may be due to network issues or Git not being available.")
+                        print("   The package will work with limited data. Use verbose=True for details.")
+                    elif len(failed_repos) > 0:
+                        print(f"⚠️  Could not cache {len(failed_repos)} repositories after retrying.")
+                        print("   The package will work with available data. Use verbose=True for details.")
+            
+            # Mark warning as shown to avoid repetition
+            self._cache_warning_shown = True
+        
+        # Mark that we've attempted to cache repos in this session
+        self._repos_cached_this_session = True
         return True
 
     def force_reclone_repositories(self, repo_names: Optional[List[str]] = None) -> bool:
@@ -3119,8 +3147,9 @@ class BlockExtractor:
             # First-time setup - show helpful message
             cache_dir = self.repo_cache.cache_dir
             if not (cache_dir / "cache_index.json").exists():
-                print("🚀 Setting up nn-rag for first use...")
+                print("🚀 Preparing nn-rag for first use...")
                 print("   This may take a moment to cache repositories.")
+                print("   The package will work with whatever data is available.")
             elif log.level <= logging.INFO:
                 print("Preparing for first use, cloning repositories...")
 
