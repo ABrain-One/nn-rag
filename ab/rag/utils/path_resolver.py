@@ -174,14 +174,67 @@ def get_generated_packages_dir() -> Path:
         return get_package_root() / "generated_packages"
 
 
-def get_blocks_dir() -> Path:
+def get_blocks_dir(project_dir: Optional[Path] = None) -> Path:
     """
     Get the directory for blocks.
+    This should always be in the user's project directory, not the package directory.
+    
+    Args:
+        project_dir: Optional project directory. If not provided, auto-detects the project directory.
+    
+    Returns:
+        Path to the blocks directory
     """
     if is_development_mode():
         # In development, use the project root
         dev_root = get_development_root()
         return dev_root / "blocks"
     else:
-        # When installed, use package directory
-        return get_package_root() / "blocks"
+        # When installed, use the provided project directory or auto-detect
+        if project_dir is not None:
+            return project_dir / "blocks"
+        else:
+            # Auto-detect project directory
+            detected_project = _detect_project_directory()
+            return detected_project / "blocks"
+
+
+def _detect_project_directory() -> Path:
+    """
+    Auto-detect the user's project directory.
+    Looks for common project indicators and returns the most appropriate directory.
+    """
+    import os
+    from pathlib import Path
+    
+    current_dir = Path(os.getcwd())
+    
+    # Look for project indicators in current directory and parents
+    for check_dir in [current_dir] + list(current_dir.parents):
+        # Check for common project indicators
+        project_indicators = [
+            "requirements.txt",
+            "pyproject.toml", 
+            "setup.py",
+            "package.json",
+            "Cargo.toml",
+            "go.mod",
+            ".git",
+            "src",
+            "lib",
+            "app"
+        ]
+        
+        # Count how many indicators are present
+        indicator_count = sum(1 for indicator in project_indicators if (check_dir / indicator).exists())
+        
+        # If we find multiple indicators, this is likely a project directory
+        if indicator_count >= 2:
+            return check_dir
+        
+        # If we find a .git directory, this is definitely a project
+        if (check_dir / ".git").exists():
+            return check_dir
+    
+    # If no project directory is detected, use current working directory
+    return current_dir

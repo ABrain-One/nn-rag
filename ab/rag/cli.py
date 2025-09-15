@@ -29,10 +29,11 @@ def main():
                    default="missing", help="Indexing policy: missing (default), force, or skip")
     p.add_argument("--no-validate", action="store_true", help="Disable automatic validation and movement of valid blocks to 'block' directory")
     p.add_argument("--cleanup-invalid", action="store_true", help="Remove invalid blocks after validation")
+    p.add_argument("--project-dir", type=Path, default=None, help="Project directory where blocks will be created (default: current directory)")
     args = p.parse_args()
 
     # Initialize extractor
-    extractor = BlockExtractor(index_mode=args.index_mode)
+    extractor = BlockExtractor(index_mode=args.index_mode, project_dir=args.project_dir)
 
     # Warm caches + build index ONCE (policy-controlled)
     ok = extractor.warm_index_once()

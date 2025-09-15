@@ -65,12 +65,17 @@ from .models import SymbolInfo, ModuleInfo, ImportGraph, ResolvedDependency, Dep
 from .file_index import FileIndexStore
 
 class BlockExtractor:
-    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing"):
+    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing", project_dir: Optional[Path] = None):
         """
-        index_mode:
-          - "missing" (default): index only repos that are not present in SQLite index
-          - "force": re-index all repos every run
-          - "skip": never index (assume index is prebuilt)
+        Args:
+            max_workers: Maximum number of worker threads
+            max_retries: Maximum number of retries for failed operations
+            index_mode: 
+              - "missing" (default): index only repos that are not present in SQLite index
+              - "force": re-index all repos every run
+              - "skip": never index (assume index is prebuilt)
+            project_dir: Optional project directory where blocks will be created.
+                        If not provided, uses current working directory.
         """
         # Initialize repo cache with package-local cache directory
         from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path
@@ -94,7 +99,7 @@ class BlockExtractor:
         self.index = FileIndexStore(db_path=package_index_db)
         # Initialize validator with absolute paths
         generated_dir = get_generated_packages_dir()
-        block_dir = get_blocks_dir()
+        block_dir = get_blocks_dir(project_dir)
         self.validator = BlockValidator(
             generated_dir=str(generated_dir),
             block_dir=str(block_dir)
