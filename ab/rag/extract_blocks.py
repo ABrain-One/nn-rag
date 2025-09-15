@@ -55,17 +55,28 @@ from .utils.repo_cache import RepoCache
 # ----------------------------------------------------------------------------- #
 # Logging
 # ----------------------------------------------------------------------------- #
+# Set up logging with less verbose output for API usage
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    level=logging.WARNING,  # Only show warnings and errors by default
+    format="%(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("extractor")
+
+# Add a method to enable verbose logging when needed
+def set_verbose_logging(verbose: bool = True):
+    """Enable or disable verbose logging for the extractor."""
+    if verbose:
+        log.setLevel(logging.INFO)
+        logging.getLogger().setLevel(logging.INFO)
+    else:
+        log.setLevel(logging.WARNING)
+        logging.getLogger().setLevel(logging.WARNING)
 from .models import SymbolInfo, ModuleInfo, ImportGraph, ResolvedDependency, DependencyResolutionResult
 from .file_index import FileIndexStore
 
 class BlockExtractor:
-    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing", project_dir: Optional[Path] = None):
+    def __init__(self, max_workers: Optional[int] = None, max_retries: int = 2, index_mode: str = "missing", project_dir: Optional[Path] = None, verbose: bool = False):
         """
         Args:
             max_workers: Maximum number of worker threads
@@ -76,7 +87,11 @@ class BlockExtractor:
               - "skip": never index (assume index is prebuilt)
             project_dir: Optional project directory where blocks will be created.
                         If not provided, uses current working directory.
+            verbose: Enable verbose logging output (default: False)
         """
+        # Set up logging verbosity
+        set_verbose_logging(verbose)
+        
         # Initialize repo cache with package-local cache directory
         from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path
         
@@ -674,16 +689,90 @@ class BlockExtractor:
         # Ensure the cache directory structure exists
         self.repo_cache.repo_cache_dir.mkdir(parents=True, exist_ok=True)
         
+        # Track failed repositories and retry them
+        failed_repos = set()
+        max_retries = 3
+        
         for name in cfg.keys():
-            try:
-                if not self.repo_cache.is_repo_cached(name):
-                    # If RepoCache attempts pull & fails, it should raise; we deliberately continue.
+            if self.repo_cache.is_repo_cached(name):
+                continue
+                
+            # Try to cache the repository with retries
+            success = False
+            for attempt in range(max_retries):
+                try:
                     result = self.repo_cache.ensure_repo_cached(name)
-                    if result is None:
-                        log.warning("Could not cache repository %s (will skip)", name)
-            except Exception as e:
-                log.warning("Cache failed for %s (continuing with whatever is present): %s", name, e)
+                    if result is not None:
+                        success = True
+                        break
+                    else:
+                        if log.level <= logging.INFO:
+                            print(f"Attempt {attempt + 1}/{max_retries} failed for {name}, retrying...")
+                except Exception as e:
+                    if log.level <= logging.INFO:
+                        print(f"Attempt {attempt + 1}/{max_retries} failed for {name}: {e}")
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2)  # Wait before retry
+            
+            if not success:
+                failed_repos.add(name)
+        
+        # Handle failed repositories with better guidance
+        if failed_repos:
+            if log.level <= logging.INFO:
+                # In verbose mode, show details
+                log.warning("Could not cache %d repositories after %d attempts: %s", 
+                           len(failed_repos), max_retries, ", ".join(sorted(failed_repos)))
+            else:
+                # In non-verbose mode, provide helpful guidance
+                if len(failed_repos) == len(cfg.keys()):
+                    print("⚠️  Could not cache any repositories after retrying.")
+                    print("   This may be due to network issues or Git not being available.")
+                    print("   The package will work with limited data. Use verbose=True for details.")
+                elif len(failed_repos) > 0:
+                    print(f"⚠️  Could not cache {len(failed_repos)} repositories after retrying.")
+                    print("   The package will work with available data. Use verbose=True for details.")
         return True
+
+    def force_reclone_repositories(self, repo_names: Optional[List[str]] = None) -> bool:
+        """
+        Force re-cloning of specified repositories or all repositories.
+        
+        Args:
+            repo_names: List of repository names to re-clone. If None, re-clones all.
+            
+        Returns:
+            True if at least one repository was successfully re-cloned
+        """
+        if repo_names is None:
+            repo_names = list(self.repo_cache.repos.keys())
+        
+        success_count = 0
+        for name in repo_names:
+            try:
+                # Clear existing cache for this repository
+                if self.repo_cache.is_repo_cached(name):
+                    repo_path = self.repo_cache.get_cached_repo(name)
+                    if repo_path and repo_path.exists():
+                        import shutil
+                        shutil.rmtree(repo_path, ignore_errors=True)
+                
+                # Force re-clone
+                result = self.repo_cache.ensure_repo_cached(name)
+                if result is not None:
+                    success_count += 1
+                    if log.level <= logging.INFO:
+                        print(f"✅ Successfully re-cloned {name}")
+                else:
+                    if log.level <= logging.INFO:
+                        print(f"❌ Failed to re-clone {name}")
+                        
+            except Exception as e:
+                if log.level <= logging.INFO:
+                    print(f"❌ Error re-cloning {name}: {e}")
+        
+        return success_count > 0
 
     def _scan_repo_for_block(self, repo: str, block: str) -> List[Dict[str, Any]]:
         root = self.repo_cache.get_cached_repo(repo)
@@ -2745,8 +2834,9 @@ class BlockExtractor:
     def load_block_list(json_path: Path) -> List[str]:
         """Load block names from JSON file, or discover them if file doesn't exist or is empty."""
         if not json_path.exists():
-            print(f"Block names file not found: {json_path}")
-            print("Auto-discovering blocks using make_blocks_name.py...")
+            if log.level <= logging.INFO:
+                print(f"Block names file not found: {json_path}")
+                print("Auto-discovering blocks using make_blocks_name.py...")
             return BlockExtractor.discover_blocks(json_path)
         
         data = json.loads(json_path.read_text(encoding='utf-8'))
@@ -2760,8 +2850,9 @@ class BlockExtractor:
         
         # If the list is empty, discover blocks
         if not out:
-            print(f"Block names file is empty: {json_path}")
-            print("Auto-discovering blocks using make_blocks_name.py...")
+            if log.level <= logging.INFO:
+                print(f"Block names file is empty: {json_path}")
+                print("Auto-discovering blocks using make_blocks_name.py...")
             return BlockExtractor.discover_blocks(json_path)
         
         seen = set()
@@ -2779,11 +2870,13 @@ class BlockExtractor:
             # Import the make_blocks_name module
             from .make_blocks_name import discover_nn_block_names
             
-            print("Discovering neural network blocks...")
+            if log.level <= logging.INFO:
+                print("Discovering neural network blocks...")
             discovered_blocks = discover_nn_block_names()
             
             if not discovered_blocks:
-                print("No blocks discovered.")
+                if log.level <= logging.INFO:
+                    print("No blocks discovered.")
                 return []
             
             # Ensure the directory exists
@@ -3020,9 +3113,16 @@ class BlockExtractor:
                            if self.repo_cache.is_repo_cached(repo))
         
         if has_any_index and self.index_mode != "force":
-            print("Hydrating from existing index...")
+            if log.level <= logging.INFO:
+                print("Hydrating from existing index...")
         else:
-            print("Preparing for first use, cloning repositories...")
+            # First-time setup - show helpful message
+            cache_dir = self.repo_cache.cache_dir
+            if not (cache_dir / "cache_index.json").exists():
+                print("🚀 Setting up nn-rag for first use...")
+                print("   This may take a moment to cache repositories.")
+            elif log.level <= logging.INFO:
+                print("Preparing for first use, cloning repositories...")
 
         # Index according to policy
         for repo in list(self.repo_cache.repos.keys()):
@@ -3056,7 +3156,8 @@ class BlockExtractor:
     # ------------------------------ Top-level API ------------------------------ #
 
     def extract_block(self, block_name: str) -> Dict[str, Any]:
-        print(f"Extracting '{block_name}'...", end=" ")
+        if log.level <= logging.INFO:
+            print(f"Extracting '{block_name}'...", end=" ")
 
         # Warm caches + build index ONCE (policy-controlled)
         if not self.warm_index_once():
@@ -3119,13 +3220,15 @@ class BlockExtractor:
         }
         if gen["success"]:
             self.extracted_blocks.append(result)
-            if 'validation' in result and result['validation'].get('valid'):
-                print("Valid")
-            else:
-                print("Invalid")
+            if log.level <= logging.INFO:
+                if 'validation' in result and result['validation'].get('valid'):
+                    print("Valid")
+                else:
+                    print("Invalid")
         else:
             self.failed_blocks.append(block_name)
-            print("Failed")
+            if log.level <= logging.INFO:
+                print("Failed")
         return result
 
     def _validate_and_move_block(self, block_name: str) -> Dict[str, Any]:
@@ -3275,6 +3378,10 @@ class BlockExtractor:
         batch_results: Dict[str, Any] = {}
         t0 = time.time()
         
+        # Show progress indicator for batch processing
+        if log.level <= logging.INFO:
+            print(f"Processing {len(plan)} blocks...")
+        
         # Process blocks in parallel
         with cf.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all extraction tasks
@@ -3298,10 +3405,10 @@ class BlockExtractor:
                 
                 completed += 1
                 
-                
-                # Progress reporting
-                if completed % max(1, 10) == 0 or completed == len(plan):
+                # Progress reporting (less frequent for cleaner output)
+                if log.level <= logging.INFO and (completed % max(1, len(plan) // 10) == 0 or completed == len(plan)):
                     ok_n = sum(1 for r in batch_results.values() if r.get("success"))
+                    print(f"Progress: {completed}/{len(plan)} blocks processed ({ok_n} successful)")
 
         ok_n = sum(1 for r in batch_results.values() if r.get("success"))
         fail_n = len(batch_results) - ok_n

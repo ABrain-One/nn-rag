@@ -30,10 +30,17 @@ def main():
     p.add_argument("--no-validate", action="store_true", help="Disable automatic validation and movement of valid blocks to 'block' directory")
     p.add_argument("--cleanup-invalid", action="store_true", help="Remove invalid blocks after validation")
     p.add_argument("--project-dir", type=Path, default=None, help="Project directory where blocks will be created (default: current directory)")
+    p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    p.add_argument("--force-reclone", action="store_true", help="Force re-cloning of all repositories")
     args = p.parse_args()
 
     # Initialize extractor
-    extractor = BlockExtractor(index_mode=args.index_mode, project_dir=args.project_dir)
+    extractor = BlockExtractor(index_mode=args.index_mode, project_dir=args.project_dir, verbose=args.verbose)
+
+    # Force re-clone if requested
+    if args.force_reclone:
+        print("🔄 Force re-cloning all repositories...")
+        extractor.force_reclone_repositories()
 
     # Warm caches + build index ONCE (policy-controlled)
     ok = extractor.warm_index_once()
