@@ -302,6 +302,7 @@ class PermissionBlock(nn.Module):
 ''')
         
         # Make destination directory read-only
+        # 0o444 = read-only for owner, group, and others
         os.chmod(validator.block_dir, 0o444)
         
         try:
