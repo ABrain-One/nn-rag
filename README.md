@@ -85,3 +85,5 @@ results = extractor.extract_blocks_from_file("custom_blocks.json")
 # Extract with start_from parameter
 results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
+
+#### The idea and leadership of Dr. Ignatov
