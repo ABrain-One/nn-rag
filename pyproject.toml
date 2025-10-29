@@ -16,8 +16,9 @@ classifiers = [
     'License :: OSI Approved :: MIT License',
     'Operating System :: OS Independent',
     'Topic :: Software Development :: Libraries',
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     'Topic :: Text Processing :: Natural Language',
-    'Topic :: Machine Learning :: Software Tools',
+    'Topic :: Machine Learning,
     'Intended Audience :: Developers',
     'Intended Audience :: Science/Research'    
 ]
