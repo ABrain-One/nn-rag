@@ -70,12 +70,16 @@ def get_config_file_path(filename: str) -> Path:
     """
     Get the full path to a configuration file.
     
+    Returns the path in the package data directory (writable location).
+    The actual config loading logic will check package resources first.
+    
     Args:
         filename: Name of the config file (e.g., "repo_config.json")
     
     Returns:
-        Path to the configuration file
+        Path to the configuration file location (where it can be written)
     """
+    # Return writable location - actual loading will check package resources first
     return get_package_data_dir() / filename
 
 
@@ -112,7 +116,18 @@ def ensure_package_data_exists() -> bool:
         nn_blocks = config_dir / "nn_block_names.json"
         
         if not repo_config.exists():
-            # Create default repo config
+            # Try to copy from package data first (if available in installed package)
+            try:
+                from importlib.resources import files
+                package_config = files('ab.rag.config').joinpath('repo_config.json')
+                if package_config.is_file():
+                    # Copy the full config from package
+                    repo_config.write_text(package_config.read_text(encoding='utf-8'), encoding='utf-8')
+                    return True
+            except (ImportError, FileNotFoundError, AttributeError):
+                pass
+            
+            # Fallback: Create minimal default repo config only if package config not found
             default_repo_config = {
                 "huggingface/pytorch-image-models": {
                     "url": "https://github.com/huggingface/pytorch-image-models.git",

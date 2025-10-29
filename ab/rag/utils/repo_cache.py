@@ -104,18 +104,37 @@ class RepoCache:
         self.cache_index_file.write_text(json.dumps(self.cache_index, indent=2), encoding="utf-8")
 
     def _load_repo_config(self) -> Dict[str, Dict]:
+        # First try to read from the config file location
         if self.config_file.exists():
             try:
                 return json.loads(self.config_file.read_text(encoding="utf-8"))
             except Exception as e:
-                return self._get_fallback_config()
-        else:
-            cfg = self._get_fallback_config()
-            try:
-                self.config_file.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            except Exception as e:
                 pass
-            return cfg
+        
+        # Try to read from package resources (installed package)
+        try:
+            from importlib.resources import files
+            package_config = files('ab.rag.config').joinpath('repo_config.json')
+            if package_config.is_file():
+                cfg = json.loads(package_config.read_text(encoding='utf-8'))
+                # Copy to cache location for future writes
+                try:
+                    self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                    self.config_file.write_text(package_config.read_text(encoding='utf-8'), encoding='utf-8')
+                except Exception:
+                    pass  # Read-only location is okay
+                return cfg
+        except (ImportError, FileNotFoundError, AttributeError):
+            pass
+        
+        # Fallback to minimal default
+        cfg = self._get_fallback_config()
+        try:
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+            self.config_file.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        except Exception as e:
+            pass
+        return cfg
 
     def _get_fallback_config(self) -> Dict[str, Dict]:
         # Minimal default if repo_config.json isn't present/parseable
