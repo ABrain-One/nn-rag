@@ -39,8 +39,12 @@ def get_cache_dir() -> Path:
     """
     Get the cache directory for the package.
     Creates the directory if it doesn't exist.
+    
+    Uses a user-writable location (~/.cache/nn-rag/) to ensure it works
+    when the package is installed via pip (where package directories may be read-only).
     """
-    cache_dir = get_package_root() / ".cache"
+    # Use user's home directory cache to ensure writability when package is installed
+    cache_dir = Path.home() / ".cache" / "nn-rag"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

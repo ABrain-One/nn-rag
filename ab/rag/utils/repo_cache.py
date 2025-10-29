@@ -64,7 +64,7 @@ class RepoCache:
         # Set default paths using the path resolver
         if cache_dir is None:
             from .path_resolver import get_cache_dir
-            cache_dir = str(get_cache_dir() / "repo_cache")
+            cache_dir = str(get_cache_dir())
         if config_file is None:
             from .path_resolver import get_config_file_path
             config_file = str(get_config_file_path("repo_config.json"))
