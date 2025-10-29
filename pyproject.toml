@@ -7,20 +7,27 @@ name = 'nn-rag'
 dynamic = ['version', 'dependencies']
 description = 'Neural Retrieval-Augmented Generation for GitHub code blocks'
 readme = { file = 'README.md', content-type = 'text/markdown' }
-license = { file = "LICENSE" }
+license = { file = 'LICENSE' }
+keywords = ['retrieval-augmented generation', 'RAG', 'large language model', 'LLM', 'code blocks', 'neural retrieval', 'generation pipeline', 'vector search', 'indexing', 'Python', 'faiss', 'block extraction', 'GitHub code', 'contextual embedding']
+
 requires-python = '>=3.6'
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent"
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: MIT License',
+    'Operating System :: OS Independent',
+    'Topic :: Software Development :: Libraries',
+    'Topic :: Text Processing :: Natural Language',
+    'Topic :: Machine Learning :: Libraries',
+    'Topic :: Machine Learning :: Software Tools',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Science/Research'    
 ]
-authors = [
-    { name = 'ABrain One and contributors', email = 'AI@ABrain.one' }
-]
+authors = [{ name = 'ABrain One and contributors', email = 'AI@ABrain.one' }]
 
 [project.urls]
 Homepage = 'https://ABrain.one'
 Repository = 'https://github.com/ABrain-One/nn-rag'
+'Bug Tracker' = 'https://github.com/ABrain-One/nn-rag/issues'
 
 [tool.setuptools.dynamic]
 version = { file = 'version' }
@@ -33,6 +40,5 @@ where = ['']
 include-package-data = true
 
 [tool.setuptools.package-data]
-'ab.rag' = ['config/*.json', 'config/*.md']
-'ab' = ['*.md', '*.json']
-'*' = ['requirements.txt', 'README.md', 'LICENSE', 'version']
+'ab' = ['*.json']
+'*' = ['requirements.txt', 'LICENSE', 'version', '*.md']
