@@ -18,7 +18,6 @@ classifiers = [
     'Topic :: Software Development :: Libraries',
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     'Topic :: Text Processing :: Natural Language',
-    'Topic :: Machine Learning',
     'Intended Audience :: Developers',
     'Intended Audience :: Science/Research'    
 ]
