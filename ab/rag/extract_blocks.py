@@ -93,10 +93,14 @@ class BlockExtractor:
         set_verbose_logging(verbose)
         
         # Initialize repo cache with package-local cache directory
-        from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path
+        from .utils.path_resolver import get_cache_dir, get_package_root, get_generated_packages_dir, get_blocks_dir, get_config_file_path, ensure_cache_structure
         
         package_dir = get_package_root()
         package_cache_dir = get_cache_dir()
+        
+        # Ensure cache structure exists (creates directories if needed)
+        ensure_cache_structure()
+        
         self.repo_cache = RepoCache(cache_dir=str(package_cache_dir))
         self.max_workers = max_workers or max(os.cpu_count() or 8, 8)
         self.max_retries = max_retries
@@ -3361,6 +3365,9 @@ class BlockExtractor:
         Returns:
             Dictionary containing batch extraction results
         """
+        # Warm index automatically if not already warmed (ensures repos are cached)
+        self.warm_index_once()
+        
         # Use default JSON path if not provided
         if json_path is None:
             from .utils.path_resolver import get_config_file_path

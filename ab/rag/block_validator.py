@@ -168,6 +168,9 @@ class BlockValidator:
         target_file = self.block_dir / f"{block_name}.py"
         
         try:
+            # Ensure target directory exists before moving
+            self.block_dir.mkdir(parents=True, exist_ok=True)
+            
             # Check if target already exists (already moved)
             if target_file.exists():
                 return True
