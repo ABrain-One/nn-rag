@@ -1,5 +1,6 @@
 # Core dependencies
 libcst>=1.0.0
+tqdm>=4.65.0
 
 # Optional dependencies for enhanced functionality
 # Uncomment as needed:

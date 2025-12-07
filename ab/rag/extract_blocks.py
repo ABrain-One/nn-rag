@@ -31,6 +31,22 @@ import threading
 import time
 import warnings
 
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Fallback: create a no-op progress bar
+    def tqdm(iterable=None, *args, **kwargs):
+        if iterable is None:
+            class NoOpProgress:
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def update(self, n=1): pass
+                def set_description(self, desc=None): pass
+            return NoOpProgress()
+        return iterable
+
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -638,18 +654,21 @@ class BlockExtractor:
 
         # log.info("Indexing %s (%d files)...", repo, len(py_files))
         t0 = time.time()
-        with cf.ThreadPoolExecutor(max_workers=self.max_workers) as ex:
-            futures = [ex.submit(self._parse_one, repo, root, fp) for fp in py_files]
-            for fut in cf.as_completed(futures):
-                res = fut.result()
-                if not res:
-                    continue
-                key, mod_info = res
-                self.import_graph.modules[key] = mod_info
-                for s in mod_info.symbols.values():
-                    self.import_graph.symbol_table[s.qualified_name] = s
-                for imp in mod_info.imports:
-                    self.import_graph.dependents.setdefault(imp, []).append(key)
+        with tqdm(total=len(py_files), desc=f"Indexing {repo}", unit="file", leave=False) as pbar:
+            with cf.ThreadPoolExecutor(max_workers=self.max_workers) as ex:
+                futures = [ex.submit(self._parse_one, repo, root, fp) for fp in py_files]
+                for fut in cf.as_completed(futures):
+                    res = fut.result()
+                    if not res:
+                        pbar.update(1)
+                        continue
+                    key, mod_info = res
+                    self.import_graph.modules[key] = mod_info
+                    for s in mod_info.symbols.values():
+                        self.import_graph.symbol_table[s.qualified_name] = s
+                    for imp in mod_info.imports:
+                        self.import_graph.dependents.setdefault(imp, []).append(key)
+                    pbar.update(1)
 
         dt = time.time() - t0
         # Mark repo as indexed in SQLite (for next processes to skip)
@@ -709,30 +728,36 @@ class BlockExtractor:
         failed_repos = set()
         max_retries = 3
         
-        for name in cfg.keys():
-            if self.repo_cache.is_repo_cached(name):
-                continue
-                
-            # Try to cache the repository with retries
-            success = False
-            for attempt in range(max_retries):
-                try:
-                    result = self.repo_cache.ensure_repo_cached(name)
-                    if result is not None:
-                        success = True
-                        break
-                    else:
-                        if log.level <= logging.INFO:
-                            print(f"Attempt {attempt + 1}/{max_retries} failed for {name}, retrying...")
-                except Exception as e:
-                    if log.level <= logging.INFO:
-                        print(f"Attempt {attempt + 1}/{max_retries} failed for {name}: {e}")
-                    if attempt < max_retries - 1:
-                        import time
-                        time.sleep(2)  # Wait before retry
-            
-            if not success:
-                failed_repos.add(name)
+        # Get list of repos that need to be cached
+        repos_to_cache = [name for name in cfg.keys() if not self.repo_cache.is_repo_cached(name)]
+        
+        if repos_to_cache:
+            with tqdm(total=len(repos_to_cache), desc="Caching repositories", unit="repo", leave=False) as pbar:
+                for name in repos_to_cache:
+                    # Try to cache the repository with retries
+                    success = False
+                    pbar.set_description(f"Caching {name}")
+                    for attempt in range(max_retries):
+                        try:
+                            result = self.repo_cache.ensure_repo_cached(name)
+                            if result is not None:
+                                success = True
+                                break
+                            else:
+                                if log.level <= logging.INFO:
+                                    log.debug(f"Attempt {attempt + 1}/{max_retries} failed for {name}, retrying...")
+                        except Exception as e:
+                            if log.level <= logging.INFO:
+                                log.debug(f"Attempt {attempt + 1}/{max_retries} failed for {name}: {e}")
+                            if attempt < max_retries - 1:
+                                import time
+                                time.sleep(2)  # Wait before retry
+                    
+                    if not success:
+                        failed_repos.add(name)
+                    
+                    pbar.update(1)
+                    pbar.set_postfix({"success": len(repos_to_cache) - len(failed_repos), "failed": len(failed_repos)})
         
         # Handle failed repositories - only show warnings in verbose mode
         if failed_repos and not self._cache_warning_shown:
@@ -763,29 +788,35 @@ class BlockExtractor:
         if repo_names is None:
             repo_names = list(self.repo_cache.repos.keys())
         
+        if not repo_names:
+            return False
+        
         success_count = 0
-        for name in repo_names:
-            try:
-                # Clear existing cache for this repository
-                if self.repo_cache.is_repo_cached(name):
-                    repo_path = self.repo_cache.get_cached_repo(name)
-                    if repo_path and repo_path.exists():
-                        import shutil
-                        shutil.rmtree(repo_path, ignore_errors=True)
-                
-                # Force re-clone
-                result = self.repo_cache.ensure_repo_cached(name)
-                if result is not None:
-                    success_count += 1
-                    if log.level <= logging.INFO:
-                        print(f"✅ Successfully re-cloned {name}")
-                else:
-                    if log.level <= logging.INFO:
-                        print(f"❌ Failed to re-clone {name}")
+        with tqdm(total=len(repo_names), desc="Cloning repositories", unit="repo") as pbar:
+            for name in repo_names:
+                try:
+                    # Clear existing cache for this repository
+                    if self.repo_cache.is_repo_cached(name):
+                        repo_path = self.repo_cache.get_cached_repo(name)
+                        if repo_path and repo_path.exists():
+                            import shutil
+                            shutil.rmtree(repo_path, ignore_errors=True)
+                    
+                    # Force re-clone
+                    pbar.set_description(f"Cloning {name}")
+                    result = self.repo_cache.ensure_repo_cached(name)
+                    if result is not None:
+                        success_count += 1
+                        pbar.set_postfix({"success": success_count, "failed": len(repo_names) - success_count})
+                    else:
+                        pbar.set_postfix({"success": success_count, "failed": len(repo_names) - success_count})
                         
-            except Exception as e:
-                if log.level <= logging.INFO:
-                    print(f"❌ Error re-cloning {name}: {e}")
+                except Exception as e:
+                    pbar.set_postfix({"success": success_count, "failed": len(repo_names) - success_count})
+                    if log.level <= logging.INFO:
+                        log.warning(f"Error re-cloning {name}: {e}")
+                
+                pbar.update(1)
         
         return success_count > 0
 
@@ -3141,27 +3172,30 @@ class BlockExtractor:
                 print("Preparing for first use, cloning repositories...")
 
         # Index according to policy
-        for repo in list(self.repo_cache.repos.keys()):
-            if not self.repo_cache.is_repo_cached(repo):
-                continue
+        repos_to_process = [repo for repo in self.repo_cache.repos.keys() if self.repo_cache.is_repo_cached(repo)]
+        if repos_to_process:
+            with tqdm(total=len(repos_to_process), desc="Warming index", unit="repo") as pbar:
+                for repo in repos_to_process:
+                    if self.index_mode == "skip":
+                        if self.index.repo_has_index(repo):
+                            # log.info("Index present for %s — hydrating from SQLite.", repo)
+                            self._hydrate_repo_from_index(repo)
+                        pbar.update(1)
+                        continue
 
-            if self.index_mode == "skip":
-                if self.index.repo_has_index(repo):
-                    # log.info("Index present for %s — hydrating from SQLite.", repo)
-                    self._hydrate_repo_from_index(repo)
-                continue
+                    if self.index_mode == "missing":
+                        if self.index.repo_has_index(repo):
+                            # log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
+                            self._hydrate_repo_from_index(repo)
+                        else:
+                            # no index yet → index now
+                            self.index_repository(repo)
+                        pbar.update(1)
+                        continue
 
-            if self.index_mode == "missing":
-                if self.index.repo_has_index(repo):
-                    # log.info("Index present for %s — skipping indexing and hydrating from SQLite.", repo)
-                    self._hydrate_repo_from_index(repo)
-                    continue
-                # no index yet → index now
-                self.index_repository(repo)
-                continue
-
-            # index_mode == "force"
-            self.index_repository(repo)
+                    # index_mode == "force"
+                    self.index_repository(repo)
+                    pbar.update(1)
 
         # Build package→repo map (derived from index)
         self._refresh_package_repo_map()
@@ -3348,8 +3382,14 @@ class BlockExtractor:
             return {}
         
         results = {}
-        for block_name in block_names:
-            results[block_name] = self.extract_single_block(block_name, validate=validate, cleanup_invalid=cleanup_invalid)
+        with tqdm(total=len(block_names), desc="Extracting blocks", unit="block") as pbar:
+            for block_name in block_names:
+                results[block_name] = self.extract_single_block(block_name, validate=validate, cleanup_invalid=cleanup_invalid)
+                pbar.update(1)
+                if results[block_name].get("success"):
+                    pbar.set_postfix({"success": len([r for r in results.values() if r.get("success")])})
+                else:
+                    pbar.set_postfix({"failed": len([r for r in results.values() if not r.get("success")])})
         return results
 
     def extract_blocks_from_file(self, json_path: Optional[Path] = None, limit: Optional[int] = None, 
@@ -3397,37 +3437,32 @@ class BlockExtractor:
         batch_results: Dict[str, Any] = {}
         t0 = time.time()
         
-        # Show progress indicator for batch processing
-        if log.level <= logging.INFO:
-            print(f"Processing {len(plan)} blocks...")
-        
-        # Process blocks in parallel
-        with cf.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all extraction tasks
-            future_to_name = {executor.submit(self.extract_single_block, name): name for name in plan}
-            
-            # Process completed extractions
-            completed = 0
-            for future in cf.as_completed(future_to_name):
-                name = future_to_name[future]
-                try:
-                    res = future.result()
-                    batch_results[name] = res
-                    
-                    # Validate and move successful blocks immediately
-                    if res.get("success"):
-                        validation_result = self.validate_block(name, cleanup_invalid=False)
-                        res["validation"] = validation_result
+        # Process blocks in parallel with progress bar
+        with tqdm(total=len(plan), desc="Extracting blocks", unit="block") as pbar:
+            with cf.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all extraction tasks
+                future_to_name = {executor.submit(self.extract_single_block, name): name for name in plan}
+                
+                # Process completed extractions
+                for future in cf.as_completed(future_to_name):
+                    name = future_to_name[future]
+                    try:
+                        res = future.result()
+                        batch_results[name] = res
                         
-                except Exception as e:
-                    batch_results[name] = {"success": False, "error": str(e)}
-                
-                completed += 1
-                
-                # Progress reporting (less frequent for cleaner output)
-                if log.level <= logging.INFO and (completed % max(1, len(plan) // 10) == 0 or completed == len(plan)):
+                        # Validate and move successful blocks immediately
+                        if res.get("success"):
+                            validation_result = self.validate_block(name, cleanup_invalid=False)
+                            res["validation"] = validation_result
+                            
+                    except Exception as e:
+                        batch_results[name] = {"success": False, "error": str(e)}
+                    
+                    # Update progress bar
                     ok_n = sum(1 for r in batch_results.values() if r.get("success"))
-                    print(f"Progress: {completed}/{len(plan)} blocks processed ({ok_n} successful)")
+                    fail_n = len(batch_results) - ok_n
+                    pbar.update(1)
+                    pbar.set_postfix({"success": ok_n, "failed": fail_n})
 
         ok_n = sum(1 for r in batch_results.values() if r.get("success"))
         fail_n = len(batch_results) - ok_n
@@ -3455,8 +3490,14 @@ class BlockExtractor:
         retried: Dict[str, Any] = {}
         failed_blocks_list = list(self.failed_blocks)
         
-        for item in failed_blocks_list:
-            retried[item] = self.extract_single_block(item, validate=validate, cleanup_invalid=cleanup_invalid)
+        with tqdm(total=len(failed_blocks_list), desc="Retrying failed blocks", unit="block") as pbar:
+            for item in failed_blocks_list:
+                retried[item] = self.extract_single_block(item, validate=validate, cleanup_invalid=cleanup_invalid)
+                pbar.update(1)
+                if retried[item].get("success"):
+                    pbar.set_postfix({"success": len([r for r in retried.values() if r.get("success")])})
+                else:
+                    pbar.set_postfix({"failed": len([r for r in retried.values() if not r.get("success")])})
         
         return retried
 
