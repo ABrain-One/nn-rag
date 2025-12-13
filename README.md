@@ -85,5 +85,16 @@ results = extractor.extract_blocks_from_file("custom_blocks.json")
 # Extract with start_from parameter
 results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
+## Citation
 
+If you find this pipeline to be useful for your research, please consider citing our <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>article</a>:
+
+```bibtex
+@article{ABrain.NN-RAG,
+  title={A Retrieval-Augmented Generation Approach to Extracting Algorithmic Logic from Neural Networks},
+  author={Khalid, Waleed and Ignatov, Dmitry and Timofte, Radu},
+  journal={arXiv preprint arXiv:2512.04329},
+  year={2025}
+}
+```
 #### The idea and leadership of Dr. Ignatov
