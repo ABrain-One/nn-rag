@@ -87,7 +87,7 @@ results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
 ## Citation
 
-If you find this pipeline to be useful for your research, please consider citing our articles for <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>automatic extraction of algorithmic logic</a> and <a target='_blank' href='https://arxiv.org/pdf/2601.02997'>architecture design</a> with LLMs:
+If you find this pipeline to be useful for your research, please consider citing our articles for <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>extraction of algorithmic logic</a> and <a target='_blank' href='https://arxiv.org/pdf/2601.02997'>architecture design</a> with LLMs:
 
 ```bibtex
 @article{ABrain.NN-RAG,
