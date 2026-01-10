@@ -87,14 +87,25 @@ results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
 ## Citation
 
-If you find this pipeline to be useful for your research, please consider citing our <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>article</a>:
+If you find this pipeline to be useful for your research, please consider citing our articles for <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>automatic extraction of algorithmic logic</a> and <a target='_blank' href='https://arxiv.org/pdf/2601.02997'>architecture design</a> with LLMs:
 
 ```bibtex
 @article{ABrain.NN-RAG,
   title={A Retrieval-Augmented Generation Approach to Extracting Algorithmic Logic from Neural Networks},
   author={Khalid, Waleed and Ignatov, Dmitry and Timofte, Radu},
-  journal={arXiv preprint arXiv:2512.04329},
+  journal={arXiv preprint},
+  volume  = {arXiv:2512.04329},
+  url = {https://arxiv.org/pdf/2512.04329}, 
   year={2025}
+}
+
+@article{ABrain.Architect,
+	title={From Memorization to Creativity: LLM as a Designer of Novel Neural-Architectures},
+	author={Khalid, Waleed and Ignatov, Dmitry and Timofte, Radu},
+	journal={arXiv preprint},
+	volume  = {arXiv:2601.02997},
+	url = {https://arxiv.org/pdf/2601.02997}, 
+	year={2026}
 }
 ```
 #### The idea and leadership of Dr. Ignatov
