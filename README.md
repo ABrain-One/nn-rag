@@ -99,13 +99,12 @@ If you find this pipeline to be useful for your research, please consider citing
   year={2025}
 }
 
-@article{ABrain.Architect,
-	title={From Memorization to Creativity: LLM as a Designer of Novel Neural-Architectures},
+@InProceedings{ABrain.Architect,
+	title={From Memorization to Creativity: {LLM} as a Designer of Novel Neural Architectures},
 	author={Khalid, Waleed and Ignatov, Dmitry and Timofte, Radu},
-	journal={arXiv preprint},
-	volume  = {arXiv:2601.02997},
-	url = {https://arxiv.org/pdf/2601.02997}, 
-	year={2026}
+	booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)},	
+	year={2026},
+    note={to appear}
 }
 ```
 #### The idea and leadership of Dr. Ignatov
