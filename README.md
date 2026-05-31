@@ -87,7 +87,7 @@ results = extractor.extract_blocks_from_file(start_from="ResNet", limit=5)
 ```
 ## Citation
 
-If you find this pipeline to be useful for your research, please consider citing our articles for <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>extraction of algorithmic logic</a> and <a target='_blank' href='https://arxiv.org/pdf/2601.02997'>architecture design</a> with LLMs:
+If you find this pipeline to be useful for your research, please consider citing our articles for <a target='_blank' href='https://arxiv.org/pdf/2512.04329'>extraction of algorithmic logic</a> and <a target='_blank' href='https://openaccess.thecvf.com/content/CVPR2026W/CVPR-NAS26/papers/Khalid_From_Memorization_to_Creativity_LLM_as_a_Designer_of_Novel_CVPRW_2026_paper.pdf'>architecture design</a> with LLMs:
 
 ```bibtex
 @article{ABrain.NN-RAG,
@@ -103,8 +103,8 @@ If you find this pipeline to be useful for your research, please consider citing
 	title={From Memorization to Creativity: {LLM} as a Designer of Novel Neural Architectures},
 	author={Khalid, Waleed and Ignatov, Dmitry and Timofte, Radu},
 	booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW)},	
-	year={2026},
-    note={to appear}
+	pages = {3252--3261},	
+	year={2026}
 }
 ```
 #### The idea and leadership of Dr. Ignatov
